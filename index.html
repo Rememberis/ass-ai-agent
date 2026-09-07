@@ -1,0 +1,1796 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<!--
+  Ass-AI-Agent — 버전 기록 (Changelog)
+  파일을 수정할 때마다 아래에 새 버전 항목을 맨 위에 추가합니다. (버전: APP_VERSION 상수와 함께 갱신)
+
+  v1.1.0 (2026-09-07)
+  - 필수/선택 입력을 한눈에 구분할 수 있도록 배지 디자인 도입 — 필수(진한 색 채움) / 선택(옅은 테두리) 스타일을 분리
+  - 1단계(학년군·교과·검색어·성취기준 목록), 2단계(평가방법·교수지향·평가요소·수업 맥락 메모·AI 수정요청), 설정(API 키)의 라벨에 필수/선택 배지를 일관되게 적용
+
+  v1.0.0 (2026-09-06)
+  - 버전 기록 체계 도입 (본문 하단 버전 표시 + 이 Changelog)
+  - "1단계 성취기준 선택" 항목 순서를 교과·학년군·검색어 → 학년군·교과·검색어 순으로 변경 (학년군 선택이 교과 목록을 걸러주도록 로직도 반전)
+  - 근거자료 검색(Upstage 임베딩)을 Supabase Edge Function 서버측 프록시로 전환 — 교사는 더 이상 Upstage 키를 입력하지 않아도 됨, 설정 패널에서 해당 입력란 제거
+-->
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>평가도구 제작 에이전트</title>
+<style>
+  :root{
+    --bg:#f6f5f2; --panel:#ffffff; --border:#e5e2da; --ink:#2b2a27; --sub:#6f6d64;
+    --accent:#8a5a3b; --accent-soft:#f3e9e0; --accent-ink:#ffffff; --good:#3d7a4f; --warn:#a4501f; --bad:#b3261e;
+    --chip:#efece4; --field-border:#d8c6b2; --field-bg:#fffaf2;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
+    font-family:'Apple SD Gothic Neo','Malgun Gothic','Noto Sans KR',-apple-system,sans-serif;
+    line-height:1.65; font-size:15.5px; -webkit-font-smoothing:antialiased;}
+  .wrap{max-width:920px;margin:0 auto;padding:32px 20px 90px;}
+  h1{font-size:21px;margin:0;}
+  h2{font-size:17px;margin:0 0 4px;}
+  h3{font-size:15px;margin:22px 0 6px;}
+  h3:first-child{margin-top:0;}
+  .sub{color:var(--sub);font-size:13px;line-height:1.55;}
+  header.app{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;
+    padding-bottom:18px;margin-bottom:24px;border-bottom:1px solid var(--border);}
+  .header-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end;}
+  .auth-badge{font-size:13px;color:var(--sub);text-align:right;}
+  .auth-badge button{margin-left:8px;}
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:14px;
+    padding:22px 22px 24px;margin-bottom:18px;
+    box-shadow:0 1px 2px rgba(43,42,39,.03), 0 6px 16px rgba(43,42,39,.03);}
+  .steps{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:26px;}
+  .step-chip{padding:10px 18px;border-radius:999px;background:var(--chip);color:var(--sub);
+    font-size:16px;font-weight:600;border:1.5px solid transparent;}
+  .step-chip.active{background:var(--accent);color:var(--accent-ink);font-weight:700;
+    box-shadow:0 2px 8px rgba(138,90,59,.28);}
+  .step-chip.done{background:#e4ede6;color:var(--good);border-color:#cfe2d4;}
+  label{display:block;font-size:13px;color:var(--sub);margin:12px 0 5px;}
+  input[type=text],input[type=email],input[type=password],select,textarea{
+    width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:9px;
+    background:#fffdfa;color:var(--ink);font-size:14.5px;font-family:inherit;
+    transition:border-color .15s ease, box-shadow .15s ease, background-color .15s ease;}
+  input[type=text]:focus,input[type=email]:focus,input[type=password]:focus,select:focus,textarea:focus{
+    outline:none;border-color:var(--accent);background:#fff;
+    box-shadow:0 0 0 3px rgba(138,90,59,.15);}
+  input::placeholder,textarea::placeholder{color:#b3afa3;}
+  textarea{min-height:70px;resize:vertical;}
+  .row{display:flex;gap:12px;flex-wrap:wrap;}
+  .row > div{flex:1;min-width:180px;}
+  button{cursor:pointer;border:1px solid var(--accent);background:var(--accent);color:var(--accent-ink);
+    padding:10px 18px;border-radius:9px;font-size:14px;font-family:inherit;font-weight:500;
+    transition:filter .12s ease, background-color .12s ease, box-shadow .12s ease;}
+  button:hover:not(:disabled){filter:brightness(.95);box-shadow:0 2px 6px rgba(138,90,59,.18);}
+  button:active:not(:disabled){filter:brightness(.9);}
+  button.secondary{background:#fff;color:var(--accent);}
+  button.secondary:hover:not(:disabled){background:var(--accent-soft);box-shadow:none;}
+  button.ghost{background:transparent;color:var(--sub);border-color:var(--border);}
+  button.ghost:hover:not(:disabled){background:var(--chip);color:var(--ink);box-shadow:none;}
+  button:disabled{opacity:.45;cursor:not-allowed;}
+  button + button{margin-left:8px;}
+  .btnbar{margin-top:18px;display:flex;gap:8px;flex-wrap:wrap;}
+  .list{display:grid;gap:8px;max-height:320px;overflow:auto;border:1px solid var(--border);
+    border-radius:10px;padding:8px;background:#fffdfa;}
+  .list-item{padding:10px 11px;border-radius:7px;border:1px solid transparent;cursor:pointer;font-size:13.5px;
+    transition:background-color .12s ease, border-color .12s ease;}
+  .list-item:hover{background:var(--chip);}
+  .list-item.selected{border-color:var(--accent);background:var(--accent-soft);}
+  .code{font-weight:600;color:var(--accent);}
+  .card{border:1px solid var(--border);border-radius:11px;padding:15px 17px;margin-bottom:12px;background:#fffdfa;
+    transition:box-shadow .15s ease;}
+  .card.selected{border-color:var(--good);box-shadow:0 0 0 2px #e4ede6 inset;}
+  .card h4{margin:0 0 8px;font-size:14.5px;}
+  /* 교사가 여러 안 중 하나를 골라야 하는 카드(A안/B안 등)의 제목 — 한눈에 비교·선택하기 쉽도록 크고 굵게 */
+  .card h4.variant-title{font-size:19px;font-weight:700;margin:0 0 12px;color:var(--accent);}
+  .kv{font-size:13.5px;margin:4px 0;}
+  .kv b{color:var(--sub);font-weight:500;margin-right:4px;}
+  .tag{display:inline-block;font-size:11.5px;background:var(--chip);color:var(--sub);
+    border-radius:5px;padding:2px 6px;margin-right:4px;}
+  .src{font-size:12px;color:var(--sub);margin-top:8px;border-top:1px dashed var(--border);padding-top:6px;}
+  /* 근거자료 검색 전, LLM이 자체 추론만으로 구상한 1차 초안 — 아직 확정되지 않았음을 점선 테두리로 표시 */
+  .draft-card{border:1.5px dashed var(--field-border);border-radius:11px;padding:14px 17px;
+    margin-bottom:10px;background:#fbf8f2;}
+  .draft-card h4{margin:0 0 6px;font-size:14px;}
+  .draft-note{font-size:12.5px;color:var(--warn);margin-bottom:10px;}
+  table.rubric{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px;}
+  table.rubric th,table.rubric td{border:1px solid var(--border);padding:9px 8px;text-align:left;vertical-align:top;}
+  table.rubric th{background:var(--chip);}
+  /* 교사가 직접 입력·수정하는 칸: 따뜻한 테두리·배경으로 한눈에 띄게 강조 */
+  .teacher-field{border:1.5px solid var(--field-border);background:var(--field-bg);
+    border-radius:12px;padding:14px 16px 16px;margin:14px 0;}
+  .teacher-field label{display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+    font-size:14px;font-weight:600;color:var(--ink);margin:0 0 6px;}
+  .teacher-field .sub{margin:0 0 9px;}
+  .teacher-field textarea,.teacher-field input[type=text]{border-color:var(--field-border);}
+  .teacher-field:has(textarea:disabled),.teacher-field:has(input:disabled){
+    opacity:.65;background:#f7f5f0;border-color:var(--border);}
+  .req-badge{font-size:10.5px;font-weight:700;color:#fff;background:var(--accent);
+    border-radius:5px;padding:2px 7px;letter-spacing:.02em;}
+  .opt-badge{font-size:10.5px;font-weight:700;color:var(--sub);background:transparent;
+    border:1px solid var(--border);border-radius:5px;padding:1px 6px;letter-spacing:.02em;}
+  /* 각 단계의 기본 입력/생성 내용과 분리된, "다음으로 넘어가기 전" 최종 확인·수정 요청 구간 */
+  .step-gate{border-top:1px solid var(--border);margin-top:26px;padding-top:18px;}
+  .step-gate-title{font-size:12px;font-weight:700;color:var(--sub);letter-spacing:.04em;
+    text-transform:uppercase;margin-bottom:12px;}
+  /* 선택한 "교수 지향"의 이론적 근거·특징을 보여주는 안내 카드 */
+  .orient-info{background:var(--chip);border:1px solid var(--border);border-radius:10px;
+    padding:12px 14px;margin-top:-4px;margin-bottom:16px;font-size:13px;line-height:1.6;color:var(--ink);}
+  .orient-info .orient-desc{font-weight:600;margin-bottom:4px;}
+  .orient-info .orient-basis{color:var(--sub);}
+  .orient-info .orient-basis b{color:var(--ink);font-weight:600;}
+  textarea.edit-cell{background:var(--field-bg);border-color:var(--field-border);}
+  textarea.edit-cell:disabled{background:#f7f5f0;border-color:var(--border);color:var(--ink);opacity:1;}
+  /* 접혀 있을 때는 글자 한 줄 높이만큼만 차지하도록 타이트하게, 펼치면 원래 여백으로 */
+  details.settings.panel{padding:9px 18px;transition:padding .1s ease;}
+  details.settings.panel[open]{padding:16px 22px 22px;}
+  details.settings summary{cursor:pointer;font-size:13.5px;color:var(--sub);padding:2px 0;}
+  .msg{font-size:13px;padding:10px 12px;border-radius:9px;margin:10px 0;line-height:1.5;}
+  .msg.err{background:#fbeae8;color:var(--bad);}
+  .msg.ok{background:#eaf3ec;color:var(--good);}
+  .msg.info{background:#f1eee6;color:var(--sub);}
+  .hidden{display:none !important;}
+  .spinner{display:inline-block;width:13px;height:13px;border:2px solid var(--border);
+    border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;
+    vertical-align:middle;margin-right:6px;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  footer.app{margin-top:28px;font-size:12px;color:var(--sub);text-align:center;line-height:1.6;}
+  footer.app a{color:var(--accent);text-decoration:underline;}
+  footer.app a:hover{color:var(--ink);}
+  #printArea{display:none;}
+  @media print{
+    body *{visibility:hidden;}
+    #printArea, #printArea *{visibility:visible;}
+    #printArea{display:block;position:absolute;top:0;left:0;width:100%;padding:0;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="app">
+    <div>
+      <h1>평가도구 제작 에이전트</h1>
+      <div class="sub">성취기준을 고르면 경기도교육청·교육부 장학자료(RAG)를 근거로 평가과제와 4단계 분석적 채점기준표를 제안합니다.</div>
+    </div>
+    <div class="header-actions">
+      <button class="ghost" id="btnHome" title="처음(1단계 · 성취기준 선택)으로 돌아갑니다">🏠 홈</button>
+      <div class="auth-badge" id="authBadge">확인 중…</div>
+    </div>
+  </header>
+
+  <!-- LOGIN -->
+  <section class="panel" id="loginPanel">
+    <h2>로그인</h2>
+    <div class="sub">이메일로 인증코드를 받아 로그인합니다 (비밀번호 불필요).</div>
+    <div class="sub">받은 이메일에 숫자 인증 코드가 없고 "Sign in" 또는 "Confirm your email address"(Confirm email address) 버튼/링크만 있다면, 그 링크를 마우스 오른쪽 버튼으로 눌러 "링크 주소 복사"를 한 뒤 아래 칸에 붙여넣으세요. <b>링크를 절대 직접 클릭하지 마세요</b> — 클릭하면 브라우저가 존재하지 않는 페이지로 이동하며 로그인에 실패합니다.</div>
+    <div class="row">
+      <div>
+        <label>이메일</label>
+        <input type="email" id="loginEmail" placeholder="you@example.com">
+      </div>
+    </div>
+    <div class="btnbar">
+      <button id="btnSendOtp">인증코드 받기</button>
+    </div>
+    <div class="row hidden" id="otpRow">
+      <div>
+        <label>이메일로 받은 인증 코드 (또는 "Sign in" 링크 주소 붙여넣기)</label>
+        <input type="text" id="loginOtp" placeholder="이메일의 인증 코드 또는 https://...로 시작하는 링크">
+      </div>
+    </div>
+    <div class="btnbar hidden" id="otpBtnBar">
+      <button id="btnVerifyOtp">로그인</button>
+      <button class="ghost" id="btnResendOtp">코드 다시 받기</button>
+    </div>
+    <div id="loginMsg"></div>
+  </section>
+
+  <!-- MAIN APP (after login) -->
+  <div id="appRoot" class="hidden">
+
+    <details class="settings panel">
+      <summary>⚙ 설정 — AI 키 (이 브라우저에만 저장됩니다)</summary>
+      <div class="sub">경기도교육청·교육부 장학자료 검색은 서버에서 안전하게 처리됩니다. 아래 AI 키 하나만 입력하면 평가과제·채점기준표 생성까지 정상적으로 동작합니다.</div>
+      <div class="row">
+        <div>
+          <label>평가과제·채점기준표를 생성할 AI</label>
+          <select id="cfgProvider">
+            <option value="gemini">Google Gemini</option>
+            <option value="openai">OpenAI</option>
+            <option value="claude">Anthropic Claude</option>
+          </select>
+        </div>
+        <div>
+          <label>모델명</label>
+          <input type="text" id="cfgModel" placeholder="예: gemini-3.6-flash">
+        </div>
+      </div>
+      <label for="cfgLlmKey"><span id="cfgKeyLabelText">선택한 AI의 API 키</span> <span class="req-badge">필수</span></label>
+      <input type="password" id="cfgLlmKey" placeholder="API 키 붙여넣기">
+
+      <div class="btnbar"><button id="btnSaveCfg">설정 저장</button></div>
+      <div id="cfgMsg"></div>
+    </details>
+
+    <div class="steps" id="stepsNav"></div>
+
+    <!-- STEP 1 -->
+    <section class="panel" id="step1">
+      <h2>1단계 · 성취기준 선택</h2>
+      <div class="row">
+        <div><label>학년군 <span class="req-badge">필수</span></label><select id="f1Grade"></select></div>
+        <div><label>교과 <span class="req-badge">필수</span></label><select id="f1Subject"></select></div>
+        <div><label>검색어 (코드/내용) <span class="opt-badge">선택</span></label><input type="text" id="f1Search" placeholder="예: [4국01-02] 또는 원인과 결과"></div>
+      </div>
+      <label>성취기준 목록 <span class="req-badge">필수</span></label>
+      <div class="list" id="standardsList"></div>
+      <div id="selectedStandard"></div>
+    </section>
+
+    <!-- STEP 2 -->
+    <section class="panel hidden" id="step2">
+      <h2>2단계 · 평가방법 · 교수지향 선택</h2>
+      <div class="row">
+        <div>
+          <label>평가방법 <span class="req-badge">필수</span></label>
+          <select id="f2Method"></select>
+        </div>
+        <div>
+          <label>교수 지향 <span class="req-badge">필수</span></label>
+          <select id="f2Orientation"></select>
+        </div>
+      </div>
+      <div id="f2OrientationInfo" class="orient-info"></div>
+      <div id="f2StandardReminder"></div>
+
+      <div class="teacher-field">
+        <label for="f2EvalElements">성취기준 기반 평가 요소 <span class="req-badge">필수</span></label>
+        <div class="sub">성취기준을 분석해 이 평가에서 확인할 평가 요소를 먼저 적어주세요 (예: 원인과 결과 관계 파악하며 듣기, 원인과 결과가 드러나게 말하기). 아래 "AI 활용 재구성" 버튼을 누르면 이 평가 요소와 선택하신 평가방법·교수지향을 반영해 성취수준을 만듭니다.</div>
+        <textarea id="f2EvalElements" placeholder="예: 원인과 결과 관계 파악하며 듣기, 원인과 결과가 드러나게 말하기"></textarea>
+      </div>
+
+      <h3>성취수준 (4단계 재구성)</h3>
+      <div class="sub">한국교육과정평가원의 공식 3수준(A~C)과 위 평가 요소·평가방법·교수지향을 반영해 AI가 4단계(매우잘함/잘함/보통/노력요함)로 재구성합니다. 내용을 확인해 그대로 수용하거나 직접 수정하거나 다시 생성한 뒤 확정해주세요 — 확정해야 아래 수업 맥락 메모를 작성할 수 있습니다.</div>
+      <div class="btnbar">
+        <button id="btnGenLevels4">AI 활용 재구성</button>
+      </div>
+      <div id="levels4Msg"></div>
+      <div id="levels4Box"></div>
+
+      <div class="teacher-field">
+        <label for="f2Context">수업 맥락 메모 <span class="opt-badge">선택</span></label>
+        <div class="sub" id="f2ContextHint">예: 단원명·차시·특이사항 — 위 성취수준을 먼저 확정해주세요</div>
+        <textarea id="f2Context" placeholder="예: 6. 경험을 표현해요 단원, 2차시, 짝 활동 중심으로 진행 예정" disabled></textarea>
+      </div>
+
+      <div class="step-gate">
+        <div class="step-gate-title">다음 단계로 넘어가기 전</div>
+        <div class="teacher-field hidden" id="levels4RevisionField">
+          <label for="levels4RevisionInput">2단계 전체에 대해 AI에서 수정 요청 <span class="opt-badge">선택</span></label>
+          <div class="sub">평가요소, 평가방법·교수지향 선택, 성취수준(4단계), 수업 맥락 메모 중에서 고치고 싶은 부분을 문장으로 적어주세요 (예: "평가방법을 관찰평가로 바꿔주세요", "수업 맥락 메모에 모둠 활동 내용을 추가해주세요", "노력요함 표현을 더 쉽게 써주세요"). 관련 없는 항목은 그대로 유지됩니다.</div>
+          <textarea id="levels4RevisionInput" placeholder="예: 평가방법을 관찰평가로 바꾸고, 노력요함 표현을 더 쉽게 써주세요"></textarea>
+          <div class="btnbar"><button class="secondary" id="btnReviseLevels4">이 요청대로 수정</button></div>
+          <div id="levels4RevisionMsg"></div>
+        </div>
+        <div class="sub">더 수정할 내용이 없으면 아래 버튼을 눌러 다음 단계로 넘어가세요.</div>
+        <div class="btnbar">
+          <button class="secondary" id="btnBackTo1">이전</button>
+          <button id="btnToStep3" disabled>다음: 평가과제 생성 (먼저 성취수준을 확정해주세요)</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- STEP 3 -->
+    <section class="panel hidden" id="step3">
+      <h2>3단계 · 평가과제 생성 (근거자료 검색 + AI 제안)</h2>
+      <div class="sub">Upstage 임베딩으로 관련 장학자료를 검색한 뒤, 선택한 LLM이 서로 다른 접근의 평가과제 2~3안을 제안합니다.</div>
+      <div class="btnbar">
+        <button class="secondary" id="btnBackTo2">이전</button>
+        <button id="btnGenTasks">평가과제 생성</button>
+      </div>
+      <div id="taskGenMsg"></div>
+      <div id="taskDraftBox"></div>
+      <div id="groundingBox"></div>
+      <div id="taskCards"></div>
+
+      <div class="step-gate">
+        <div class="step-gate-title">다음 단계로 넘어가기 전</div>
+        <div class="teacher-field hidden" id="taskRevisionField">
+          <label for="taskRevisionInput">3단계 전체에 대해 AI에서 수정 요청 <span class="opt-badge">선택</span></label>
+          <div class="sub">선택하신 평가과제에서 고치고 싶은 부분을 문장으로 적어주세요 (예: "평가문항이 너무 어려워요, 더 쉬운 말로 바꿔주세요", "이미지 프롬프트를 더 구체적으로 써주세요").</div>
+          <textarea id="taskRevisionInput" placeholder="예: 평가문항이 너무 어려워요, 더 쉬운 말로 바꿔주세요"></textarea>
+          <div class="btnbar"><button class="secondary" id="btnReviseTask">이 요청대로 수정</button></div>
+          <div id="taskRevisionMsg"></div>
+        </div>
+        <div class="sub hidden" id="taskGateHint">더 수정할 내용이 없으면 아래 버튼을 눌러 다음 단계로 넘어가세요.</div>
+        <div class="btnbar hidden" id="taskNextBar">
+          <button id="btnToStep4">다음: 채점기준표 생성</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- STEP 4 (rubric) -->
+    <section class="panel hidden" id="step4">
+      <h2>4단계 · 채점기준표 생성 (4단계 분석적 채점기준표)</h2>
+      <div class="sub">선택한 평가과제 + 공식 성취수준(A/B/C) + 근거자료를 바탕으로 4단계(매우잘함/잘함/보통/노력요함) 채점기준표 2~3안을 제안합니다.</div>
+      <div class="btnbar">
+        <button class="secondary" id="btnBackTo3">이전</button>
+        <button id="btnGenRubrics">채점기준표 생성</button>
+      </div>
+      <div id="rubricGenMsg"></div>
+      <div id="rubricCards"></div>
+
+      <div class="step-gate">
+        <div class="step-gate-title">다음 단계로 넘어가기 전</div>
+        <div class="teacher-field hidden" id="rubricRevisionField">
+          <label for="rubricRevisionInput">4단계 전체에 대해 AI에서 수정 요청 <span class="opt-badge">선택</span></label>
+          <div class="sub">선택하신 채점기준표에서 고치고 싶은 부분을 문장으로 적어주세요 (예: "채점요소 이름을 더 쉽게 바꿔주세요", "노력요함 수준을 조금 더 구체적으로 써주세요").</div>
+          <textarea id="rubricRevisionInput" placeholder="예: 채점요소 이름을 더 쉽게 바꿔주세요"></textarea>
+          <div class="btnbar"><button class="secondary" id="btnReviseRubric">이 요청대로 수정</button></div>
+          <div id="rubricRevisionMsg"></div>
+        </div>
+        <div class="sub hidden" id="rubricGateHint">더 수정할 내용이 없으면 아래 버튼을 눌러 다음 단계로 넘어가세요.</div>
+        <div class="btnbar hidden" id="rubricNextBar">
+          <button id="btnToStep5">다음: 다운로드</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- STEP 5 (download) -->
+    <section class="panel hidden" id="step5">
+      <h2>5단계 · 최종 확인 및 다운로드</h2>
+      <div id="finalPreview"></div>
+      <div class="btnbar">
+        <button class="secondary" id="btnBackTo4">이전</button>
+        <button id="btnPrintPdf">PDF로 저장 (인쇄)</button>
+        <button id="btnDownloadHtml">HTML로 다운로드</button>
+        <button id="btnDownloadDoc">Word(.doc)로 다운로드</button>
+      </div>
+    </section>
+
+  </div>
+
+  <footer class="app">Copyright by <a href="mailto:leonlai21c@gmail.com?subject=%5BAss-AI-Agent%5D%20%EC%9D%98%EA%B2%AC%20%EC%A0%84%EB%8B%AC">leonlai21c@gmail.com</a> · Ass-AI-Agent <span id="appVersionTag"></span> · 근거자료 기반 AI 초안이므로 반드시 교사가 검토·수정 후 사용하세요.</footer>
+</div>
+
+<div id="printArea"></div>
+
+<script>
+(function(){
+"use strict";
+
+/* ---------------- CONFIG ---------------- */
+const SUPABASE_URL = "https://kmgsqankugnbkejigpak.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImttZ3NxYW5rdWduYmtlamlncGFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgzNTA1MDIsImV4cCI6MjEwMzkyNjUwMn0.vXETJmovPMUtGGZRXIFveVoZSmA0BytO1nJ4Ps5S7RI";
+const DEFAULT_MODELS = { gemini: "gemini-3.6-flash", openai: "gpt-4o-mini", claude: "claude-sonnet-4-5-20250929" };
+
+/* ---------------- STATE ---------------- */
+const state = {
+  session: null,           // {access_token, refresh_token, expires_at, user}
+  standards: [],
+  methods: [],
+  orientations: [],
+  selectedStandard: null,
+  performanceLevels: [],
+  selectedMethod: null,
+  selectedOrientation: null,
+  evalElements: "",         // 교사가 입력한 "성취기준 기반 평가 요소" (자유 텍스트)
+  levels4: null,            // {매우잘함,잘함,보통,노력요함} — AI가 3수준(A~C)을 4단계로 재구성한 결과
+  levels4Confirmed: false,
+  contextNote: "",
+  agentSessionId: null,
+  docTypes: [],             // knowledge_documents의 doc_type 전체 목록 (근거자료 다양성 확보용)
+  taskDrafts: [],           // 근거자료 검색 전 LLM 자체 구상 초안 — [{variant_label, evaluation_elements[], scenario_summary, item_approach, key_search_terms[]}]
+  groundingChunks: [],
+  taskVariants: [],         // [{id?, variant_label, evaluation_elements[], scenario_lines[], items:[{stage,cognitive_level,text}], needs_image, image_prompt_kr, image_prompt_en, grounding_sources[]}]
+  selectedTaskIdx: -1,
+  rubricVariants: [],
+  selectedRubricIdx: -1,
+};
+
+/* ---------------- UTIL ---------------- */
+const $ = (id) => document.getElementById(id);
+function el(tag, opts, children){
+  const e = document.createElement(tag);
+  if(opts) for(const k in opts){
+    if(k === "class") e.className = opts[k];
+    else if(k === "html") e.innerHTML = opts[k];
+    else e.setAttribute(k, opts[k]);
+  }
+  (children||[]).forEach(c => e.appendChild(typeof c === "string" ? document.createTextNode(c) : c));
+  return e;
+}
+function showMsg(container, text, type){
+  container.innerHTML = "";
+  if(!text) return;
+  container.appendChild(el("div", {class:"msg " + (type||"info")}, [text]));
+}
+function esc(s){ return (s==null?"":String(s)).replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+
+/* ---------------- AUTH (Supabase GoTrue, email OTP) ---------------- */
+function b64urlDecode(str){
+  str = str.replace(/-/g,"+").replace(/_/g,"/");
+  while(str.length % 4) str += "=";
+  return decodeURIComponent(atob(str).split("").map(c =>
+    "%" + ("00"+c.charCodeAt(0).toString(16)).slice(-2)).join(""));
+}
+function decodeJwt(token){
+  try{ return JSON.parse(b64urlDecode(token.split(".")[1])); } catch(e){ return null; }
+}
+
+async function authRequest(path, body){
+  const res = await fetch(SUPABASE_URL + "/auth/v1" + path, {
+    method: "POST",
+    headers: { "Content-Type":"application/json", "apikey": SUPABASE_ANON_KEY },
+    body: JSON.stringify(body)
+  });
+  const data = await res.json().catch(()=> ({}));
+  if(!res.ok) throw new Error(data.error_description || data.msg || data.error || ("로그인 요청 실패 (" + res.status + ")"));
+  return data;
+}
+
+function persistSession(sess){
+  state.session = sess;
+  try{ localStorage.setItem("pda_session", JSON.stringify(sess)); }catch(e){}
+}
+function loadPersistedSession(){
+  try{
+    const raw = localStorage.getItem("pda_session");
+    if(raw) state.session = JSON.parse(raw);
+  }catch(e){ state.session = null; }
+}
+function clearSession(){
+  state.session = null;
+  try{ localStorage.removeItem("pda_session"); }catch(e){}
+}
+
+async function ensureFreshSession(){
+  if(!state.session) return null;
+  const claims = decodeJwt(state.session.access_token);
+  const now = Math.floor(Date.now()/1000);
+  if(claims && claims.exp && claims.exp - now > 60) return state.session;
+  // refresh
+  try{
+    const data = await authRequest("/token?grant_type=refresh_token", { refresh_token: state.session.refresh_token });
+    const sess = { access_token: data.access_token, refresh_token: data.refresh_token, user: data.user };
+    persistSession(sess);
+    return sess;
+  }catch(e){
+    clearSession();
+    return null;
+  }
+}
+
+async function requestOtp(email){
+  await authRequest("/otp", { email, create_user: true });
+}
+// Accepts either a 6-digit OTP code, or the full "Sign in" link URL pasted from the email
+// (the default Supabase email template only includes a clickable link, no numeric code).
+function parseOtpInput(raw){
+  const val = raw.trim();
+  if(/^https?:\/\//i.test(val)){
+    try{
+      const u = new URL(val);
+      const type = u.searchParams.get("type") || "magiclink";
+      if(u.searchParams.get("token_hash")) return { field:"token_hash", value: u.searchParams.get("token_hash"), type };
+      if(u.searchParams.get("token")) return { field:"token", value: u.searchParams.get("token"), type };
+      throw new Error("링크에서 인증 토큰을 찾지 못했습니다.");
+    }catch(e){
+      throw new Error("붙여넣은 링크를 인식하지 못했습니다. 이메일의 'Sign in' 링크 주소를 그대로 복사해 붙여넣어주세요.");
+    }
+  }
+  return { field:"token", value: val, type: "email" };
+}
+async function verifyOtp(email, rawInput){
+  const { field, value, type } = parseOtpInput(rawInput);
+  const body = { email, type };
+  body[field] = value;
+  let data;
+  try{
+    data = await authRequest("/verify", body);
+  }catch(e1){
+    // fall back to the other token field name in case the server expects it instead
+    if(field === "token_hash"){
+      const body2 = { email, type, token: value };
+      data = await authRequest("/verify", body2);
+    } else {
+      throw e1;
+    }
+  }
+  if(!data.access_token) throw new Error("인증에 실패했습니다. 코드나 링크를 다시 확인해주세요.");
+  persistSession({ access_token: data.access_token, refresh_token: data.refresh_token, user: data.user });
+}
+
+/* ---------------- SUPABASE REST (PostgREST) ---------------- */
+async function pgFetch(path, opts){
+  opts = opts || {};
+  const sess = await ensureFreshSession();
+  if(!sess) throw new Error("로그인이 만료되었습니다. 다시 로그인해주세요.");
+  const headers = Object.assign({
+    "apikey": SUPABASE_ANON_KEY,
+    "Authorization": "Bearer " + sess.access_token,
+    "Content-Type": "application/json"
+  }, opts.headers || {});
+  const res = await fetch(SUPABASE_URL + "/rest/v1" + path, {
+    method: opts.method || "GET",
+    headers,
+    body: opts.body ? JSON.stringify(opts.body) : undefined
+  });
+  if(!res.ok){
+    let msg = res.status + " 오류";
+    try{ const j = await res.json(); msg = (j.message || j.hint || JSON.stringify(j)); }catch(e){}
+    throw new Error("DB 요청 실패: " + msg);
+  }
+  if(res.status === 204) return null;
+  return res.json().catch(()=>null);
+}
+function pgGet(table, query){ return pgFetch("/" + table + "?" + query); }
+function pgInsert(table, rows, returning){
+  return pgFetch("/" + table, {
+    method:"POST", body: rows,
+    headers: { "Prefer": "return=" + (returning===false ? "minimal" : "representation") }
+  });
+}
+function pgPatch(table, query, patch){
+  return pgFetch("/" + table + "?" + query, { method:"PATCH", body: patch, headers:{"Prefer":"return=representation"} });
+}
+function rpc(name, args){
+  return pgFetch("/rpc/" + name, { method:"POST", body: args });
+}
+
+/* ---------------- UPSTAGE EMBEDDING (서버측 Edge Function 프록시 경유) ---------------- */
+async function embedQuery(text){
+  const sess = await ensureFreshSession();
+  if(!sess) throw new Error("로그인이 만료되었습니다. 다시 로그인해주세요.");
+  const res = await fetch(SUPABASE_URL + "/functions/v1/embed-search", {
+    method:"POST",
+    headers:{
+      "apikey": SUPABASE_ANON_KEY,
+      "Authorization":"Bearer " + sess.access_token,
+      "Content-Type":"application/json"
+    },
+    body: JSON.stringify({ text })
+  });
+  const data = await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error("근거자료 검색(임베딩) 오류: " + (data.error || res.status));
+  return data.embedding;
+}
+
+/* ---------------- LLM CALLS ---------------- */
+function extractJson(text){
+  if(!text) throw new Error("LLM 응답이 비어 있습니다.");
+  let t = text.trim();
+  t = t.replace(/^```json/i, "").replace(/^```/,"").replace(/```$/,"").trim();
+  const start = t.search(/[\[{]/);
+  if(start === -1) throw new Error("LLM 응답에서 JSON을 찾지 못했습니다.");
+  // find matching bracket from the end
+  const openChar = t[start], closeChar = openChar === "[" ? "]" : "}";
+  let depth = 0, end = -1;
+  for(let i=start;i<t.length;i++){
+    if(t[i]===openChar) depth++;
+    else if(t[i]===closeChar){ depth--; if(depth===0){ end=i; break; } }
+  }
+  const jsonStr = end === -1 ? t.slice(start) : t.slice(start, end+1);
+  return JSON.parse(jsonStr);
+}
+
+// 모델 서버 일시 과부하("high demand", 429/502/503/504 등)에 대비한 지수 백오프 재시도.
+// onRetry(attempt, delayMs)가 주어지면 재시도할 때마다 호출해 화면에 진행 상황을 알릴 수 있다.
+async function withRetry(fn, opts){
+  opts = opts || {};
+  const maxRetries = opts.maxRetries != null ? opts.maxRetries : 3;
+  const baseDelay = opts.baseDelay || 1500;
+  const onRetry = opts.onRetry;
+  let lastErr;
+  for(let attempt=0; attempt<=maxRetries; attempt++){
+    try{
+      return await fn();
+    }catch(err){
+      lastErr = err;
+      const msg = (err && err.message) || "";
+      const retryable = /high demand|overloaded|please try again|rate limit|429|502|503|504|temporarily unavailable|일시적|혼잡|quota/i.test(msg);
+      if(!retryable || attempt === maxRetries){
+        if(retryable){
+          err.message = msg + " (자동 재시도 " + maxRetries + "회 후에도 실패했습니다 — 모델 서버가 일시적으로 혼잡한 상태입니다. 잠시 후 다시 시도하거나, 설정에서 다른 LLM으로 바꿔보세요.)";
+        }
+        throw err;
+      }
+      const delay = Math.round(baseDelay * Math.pow(2, attempt) + Math.random()*400);
+      if(onRetry){ try{ onRetry(attempt+1, delay); }catch(e){} }
+      await new Promise(r=>setTimeout(r, delay));
+    }
+  }
+  throw lastErr;
+}
+
+function retryStatusMsg(attempt, delay, model, flag){
+  if(flag === true) return "'" + model + "' 모델로 전환하여 계속 진행합니다.";
+  if(flag === "switching") return "계속 혼잡하여 '" + model + "' 모델로 전환해 다시 시도합니다…";
+  return "모델 서버가 일시적으로 혼잡합니다. 자동으로 다시 시도합니다… (" + attempt + "회, 약 " + Math.round(delay/1000) + "초 후)";
+}
+
+async function callGemini(model, key, system, prompt){
+  const res = await fetch("https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent?key=" + key, {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({
+      systemInstruction: { parts:[{text: system}] },
+      contents: [{ role:"user", parts:[{text: prompt}] }],
+      generationConfig: { responseMimeType: "application/json", temperature: 0.6 }
+    })
+  });
+  const data = await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error("Gemini 오류: " + (data.error && data.error.message || res.status));
+  const text = data.candidates && data.candidates[0] && data.candidates[0].content.parts.map(p=>p.text).join("");
+  return extractJson(text);
+}
+async function callOpenAI(model, key, system, prompt){
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method:"POST",
+    headers:{ "Authorization":"Bearer " + key, "Content-Type":"application/json" },
+    body: JSON.stringify({
+      model,
+      messages: [{role:"system", content: system}, {role:"user", content: prompt}],
+      response_format: { type: "json_object" },
+      temperature: 0.6
+    })
+  });
+  const data = await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error("OpenAI 오류: " + (data.error && data.error.message || res.status));
+  return extractJson(data.choices[0].message.content);
+}
+async function callClaude(model, key, system, prompt){
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method:"POST",
+    headers:{
+      "x-api-key": key,
+      "anthropic-version":"2023-06-01",
+      "anthropic-dangerous-direct-browser-access":"true",
+      "Content-Type":"application/json"
+    },
+    body: JSON.stringify({
+      model, max_tokens: 4096, system,
+      messages:[{role:"user", content: prompt + "\n\n반드시 유효한 JSON만 출력하세요. 다른 설명 문장을 덧붙이지 마세요."}]
+    })
+  });
+  const data = await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error("Claude 오류: " + (data.error && data.error.message || res.status));
+  const text = data.content && data.content.map(c=>c.text||"").join("");
+  return extractJson(text);
+}
+// Gemini는 특정 모델 하나가 일시적으로 혼잡("high demand")할 수 있으므로, 재시도로도 안 되면
+// 같은 계정 키로 다른 Gemini 모델을 순서대로 시도해본다. (모델명이 바뀌어도 계속 동작하도록 여러 세대를 나열)
+const GEMINI_FALLBACK_MODELS = ["gemini-3.6-flash", "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"];
+
+async function callLLM(system, prompt, onRetry){
+  const provider = $("cfgProvider").value;
+  const model = $("cfgModel").value.trim() || DEFAULT_MODELS[provider];
+  const key = $("cfgLlmKey").value.trim();
+  if(!key) throw new Error("설정에서 LLM API 키를 입력해주세요.");
+
+  if(provider !== "gemini"){
+    const call = () => {
+      if(provider === "openai") return callOpenAI(model, key, system, prompt);
+      if(provider === "claude") return callClaude(model, key, system, prompt);
+      throw new Error("알 수 없는 LLM 제공자");
+    };
+    return await withRetry(call, { maxRetries: 3, baseDelay: 1500, onRetry });
+  }
+
+  const modelsToTry = [model, ...GEMINI_FALLBACK_MODELS.filter(m => m !== model)];
+  let lastErr;
+  for(let i=0; i<modelsToTry.length; i++){
+    const m = modelsToTry[i];
+    try{
+      const result = await withRetry(() => callGemini(m, key, system, prompt), {
+        maxRetries: i===0 ? 2 : 1, baseDelay: 1500,
+        onRetry: (attempt, delay) => { if(onRetry) onRetry(attempt, delay, m); }
+      });
+      if(i>0 && onRetry) onRetry(0, 0, m, true); // 모델을 바꿔서 성공했음을 알림
+      return result;
+    }catch(err){
+      lastErr = err;
+      const msg = (err && err.message) || "";
+      const retryable = /high demand|overloaded|please try again|rate limit|429|502|503|504|temporarily unavailable|일시적|혼잡|quota/i.test(msg);
+      if(!retryable) throw err; // 과부하가 아닌 다른 오류(키/권한 등)는 모델을 바꿔봐도 소용없으므로 즉시 실패 처리
+      if(i < modelsToTry.length-1 && onRetry){ try{ onRetry(0, 0, modelsToTry[i+1], "switching"); }catch(e){} }
+    }
+  }
+  lastErr.message = (lastErr.message||"") + " (" + modelsToTry.join(", ") + " 모델을 모두 시도했지만 계속 혼잡합니다. 잠시 후 다시 시도하거나 설정에서 OpenAI/Claude로 바꿔보세요.)";
+  throw lastErr;
+}
+
+/* ---------------- SETTINGS (localStorage) ---------------- */
+function loadCfg(){
+  try{
+    const raw = localStorage.getItem("pda_cfg");
+    if(!raw) return;
+    const c = JSON.parse(raw);
+    if(c.provider) $("cfgProvider").value = c.provider;
+    if(c.model) $("cfgModel").value = c.model;
+    if(c.llmKey) $("cfgLlmKey").value = c.llmKey;
+  }catch(e){}
+  if(!$("cfgModel").value) $("cfgModel").value = DEFAULT_MODELS[$("cfgProvider").value];
+}
+function saveCfg(){
+  const c = {
+    provider: $("cfgProvider").value,
+    model: $("cfgModel").value.trim(),
+    llmKey: $("cfgLlmKey").value.trim()
+  };
+  try{ localStorage.setItem("pda_cfg", JSON.stringify(c)); }catch(e){}
+  showMsg($("cfgMsg"), "설정을 저장했습니다 (이 브라우저에만 보관됩니다).", "ok");
+}
+
+/* ---------------- STEP NAV ---------------- */
+const STEP_IDS = ["step1","step2","step3","step4","step5"];
+const APP_VERSION = "1.1.0";
+const APP_VERSION_DATE = "2026-09-07";
+const STEP_LABELS = ["① 성취기준","② 방법·지향","③ 평가과제","④ 채점기준표","⑤ 다운로드"];
+let currentStep = 0;
+function renderStepsNav(){
+  const nav = $("stepsNav");
+  nav.innerHTML = "";
+  STEP_LABELS.forEach((label,i)=>{
+    const cls = i===currentStep ? "step-chip active" : (i<currentStep ? "step-chip done" : "step-chip");
+    nav.appendChild(el("span", {class:cls}, [label]));
+  });
+}
+function goToStep(i){
+  currentStep = i;
+  STEP_IDS.forEach((id,idx)=> $(id).classList.toggle("hidden", idx!==i));
+  renderStepsNav();
+  window.scrollTo({top:0, behavior:"smooth"});
+}
+
+/* ---------------- STEP 1: 성취기준 ---------------- */
+async function loadStandardsMeta(){
+  const rows = await pgGet("achievement_standards", "select=subject,grade_band&order=subject.asc");
+  const grades = [...new Set(rows.map(r=>r.grade_band))].sort();
+  const byGrade = {};
+  rows.forEach(r=>{ (byGrade[r.grade_band] = byGrade[r.grade_band]||new Set()).add(r.subject); });
+  const gradeSel = $("f1Grade");
+  gradeSel.innerHTML = "";
+  grades.forEach(g => gradeSel.appendChild(el("option",{value:g},[g])));
+  function refreshSubjects(){
+    const subjSel = $("f1Subject");
+    subjSel.innerHTML = "";
+    [...(byGrade[gradeSel.value]||[])].sort().forEach(s => subjSel.appendChild(el("option",{value:s},[s])));
+  }
+  gradeSel.onchange = () => { refreshSubjects(); searchStandards(); };
+  refreshSubjects();
+}
+async function searchStandards(){
+  const subject = $("f1Subject").value;
+  const grade = $("f1Grade").value;
+  const q = $("f1Search").value.trim();
+  let query = "select=code,subject,grade_band,domain,content_unit,standard_text&subject=eq." + encodeURIComponent(subject);
+  if(grade) query += "&grade_band=eq." + encodeURIComponent(grade);
+  query += "&order=code.asc&limit=60";
+  let rows = await pgGet("achievement_standards", query);
+  if(q){
+    const ql = q.toLowerCase();
+    rows = rows.filter(r => (r.code||"").toLowerCase().includes(ql) || (r.standard_text||"").toLowerCase().includes(ql));
+  }
+  const list = $("standardsList");
+  list.innerHTML = "";
+  if(rows.length===0) list.appendChild(el("div",{class:"sub"},["검색 결과가 없습니다."]));
+  rows.forEach(r=>{
+    const item = el("div",{class:"list-item"},[
+      el("span",{class:"code"},[r.code + " "]),
+      document.createTextNode((r.content_unit? "["+r.content_unit+"] " : "") + r.standard_text)
+    ]);
+    item.onclick = () => selectStandard(r, item);
+    list.appendChild(item);
+  });
+}
+function renderStandardCard(box, opts){
+  opts = opts || {};
+  const row = state.selectedStandard;
+  const levels = state.performanceLevels;
+  box.innerHTML = "";
+  const card = el("div",{class:"card selected"});
+  card.appendChild(el("h4",{},[row.code + " · " + row.subject + " " + row.grade_band + " · " + row.domain]));
+  card.appendChild(el("div",{class:"kv"},[row.standard_text]));
+  box.appendChild(card);
+  if(levels.length){
+    const t = el("table",{class:"rubric"});
+    t.appendChild(el("tr",{},[el("th",{},["수준"]),el("th",{},["서술"])]));
+    levels.forEach(l=> t.appendChild(el("tr",{},[el("td",{},[l.level_label]), el("td",{},[l.descriptor])])));
+    box.appendChild(t);
+  } else if(!opts.hideNoLevelsMsg) {
+    box.appendChild(el("div",{class:"msg info"},["공식 성취수준(A/B/C) 자료가 아직 없습니다 — 계속 진행은 가능하지만 참고 자료 없이 채점기준표를 만들게 됩니다."]));
+  }
+}
+async function selectStandard(row, itemEl){
+  document.querySelectorAll("#standardsList .list-item").forEach(x=>x.classList.remove("selected"));
+  if(itemEl) itemEl.classList.add("selected");
+  state.selectedStandard = row;
+  const levels = await pgGet("performance_levels", "select=level_label,level_order,descriptor&standard_code=eq." + encodeURIComponent(row.code) + "&order=level_order.asc");
+  state.performanceLevels = levels;
+  state.evalElements = "";
+  state.levels4 = null;
+  state.levels4Confirmed = false;
+  const box = $("selectedStandard");
+  renderStandardCard(box);
+  box.appendChild(el("div",{class:"btnbar"},[ (()=>{ const b=el("button",{},["다음: 평가방법·교수지향 선택"]); b.onclick=()=>{ renderStep2Standard(); renderLevels4UI(); goToStep(1); }; return b; })() ]));
+}
+
+/* ---------------- STEP 2: 방법 / 지향 ---------------- */
+async function loadMethodsOrientations(){
+  state.methods = await pgGet("assessment_methods", "select=slug,name,category,description,rubric_hint,scene_examples&order=category.desc,sort_order.asc");
+  state.orientations = await pgGet("teaching_orientations", "select=slug,name,short_desc,theoretical_basis&order=sort_order.asc");
+  const mSel = $("f2Method"); mSel.innerHTML = "";
+  state.methods.forEach(m => mSel.appendChild(el("option",{value:m.slug},["[" + m.category + "] " + m.name])));
+  const oSel = $("f2Orientation"); oSel.innerHTML = "";
+  state.orientations.forEach(o => oSel.appendChild(el("option",{value:o.slug},[o.name])));
+  renderOrientationInfo();
+}
+
+// 선택한 "교수 지향"의 특징(간단 설명)과 이론적 근거·출처를 안내 카드로 보여준다 — 교사가 지향을 이해하고 고를 수 있도록.
+function renderOrientationInfo(){
+  const box = $("f2OrientationInfo");
+  if(!box) return;
+  const orient = state.orientations.find(o=>o.slug===$("f2Orientation").value);
+  box.innerHTML = "";
+  if(!orient){ return; }
+  if(orient.short_desc) box.appendChild(el("div",{class:"orient-desc"},[orient.short_desc]));
+  if(orient.theoretical_basis) box.appendChild(el("div",{class:"orient-basis"},[orient.theoretical_basis]));
+}
+
+function renderStep2Standard(){
+  renderStandardCard($("f2StandardReminder"), { hideNoLevelsMsg: false });
+  $("f2EvalElements").value = state.evalElements || "";
+}
+
+const LEVEL4_KEYS = ["매우잘함","잘함","보통","노력요함"];
+
+function applyLevels4Gate(){
+  const confirmed = !!state.levels4Confirmed;
+  $("f2EvalElements").disabled = confirmed;
+  $("f2Context").disabled = !confirmed;
+  $("f2ContextHint").textContent = confirmed
+    ? "예: 단원명·차시·특이사항"
+    : "예: 단원명·차시·특이사항 — 위 성취수준을 먼저 확정해주세요";
+  $("btnToStep3").disabled = !confirmed;
+  $("btnToStep3").textContent = confirmed ? "다음: 평가과제 생성" : "다음: 평가과제 생성 (먼저 성취수준을 확정해주세요)";
+}
+
+function renderLevels4UI(){
+  const box = $("levels4Box");
+  box.innerHTML = "";
+  applyLevels4Gate();
+  $("levels4RevisionField").classList.toggle("hidden", !state.levels4);
+  if(!state.levels4){
+    return;
+  }
+  const card = el("div",{class:"card" + (state.levels4Confirmed ? " selected" : "")});
+  const table = el("table",{class:"rubric"});
+  table.appendChild(el("tr",{},[el("th",{},["수준"]),el("th",{},["서술 (직접 수정 가능)"])]));
+  LEVEL4_KEYS.forEach(k=>{
+    const ta = el("textarea",{class:"edit-cell", style:"min-height:44px;"});
+    ta.value = state.levels4[k] || "";
+    ta.disabled = state.levels4Confirmed;
+    ta.oninput = () => { state.levels4[k] = ta.value; };
+    const tdInput = el("td",{});
+    tdInput.appendChild(ta);
+    table.appendChild(el("tr",{},[el("td",{},[k]), tdInput]));
+  });
+  card.appendChild(table);
+  const btnbar = el("div",{class:"btnbar"});
+  if(!state.levels4Confirmed){
+    const confirmBtn = el("button",{},["이 내용으로 확정"]);
+    confirmBtn.onclick = confirmLevels4;
+    const regenBtn = el("button",{class:"secondary"},["다시 생성"]);
+    regenBtn.onclick = generateLevels4;
+    btnbar.appendChild(confirmBtn);
+    btnbar.appendChild(regenBtn);
+  } else {
+    const editBtn = el("button",{class:"secondary"},["수정하기"]);
+    editBtn.onclick = () => { state.levels4Confirmed = false; renderLevels4UI(); };
+    btnbar.appendChild(el("span",{class:"tag"},["확정됨"]));
+    btnbar.appendChild(editBtn);
+  }
+  card.appendChild(btnbar);
+  box.appendChild(card);
+}
+
+// '노력요함' 결핍·실패 표현 자동 검출/보정 (성취수준 4단계 재구성용). DEFICIT_PHRASES/findDeficitPhrase는 이 파일 하단에 정의되어 있으나
+// 함수 선언은 호이스팅되고 이 함수는 버튼 클릭 시점(스크립트 전체 로드 이후)에만 호출되므로 문제없이 참조된다.
+async function fixLevels4Deficit(levels4){
+  const txt = levels4["노력요함"] || "";
+  if(!findDeficitPhrase(txt)) return { levels: levels4, remaining: false };
+  try{
+    const system2 = "당신은 초등 평가 전문가입니다. 아래 '노력요함' 성취수준 서술에는 결핍·실패 표현('부족하다','어려움이 있다','~하지 못한다','도움이 필요하다' 등)이 포함되어 있어 수정이 필요합니다. '보통'보다 낮은 수준이지만 학생이 실제로 할 수 있는 관찰 가능한 행동으로, 반드시 '~할 수 있다'로 끝나는 긍정문 한 문장으로 다시 쓰세요. 결핍·실패·부정 표현은 절대 사용하지 마세요. JSON 객체 하나만 출력하세요.";
+    const prompt2 = "보통 수준(참고, 이보다 낮은 수준으로): " + (levels4["보통"]||"") + "\n잘못 작성된 노력요함: " + txt + '\n\n다음 JSON 스키마의 객체 하나로만 출력하세요:\n{"노력요함":"..."}';
+    const result2 = await callLLM(system2, prompt2);
+    const obj2 = Array.isArray(result2) ? result2[0] : result2;
+    const newTxt = obj2 && obj2["노력요함"];
+    if(newTxt && !findDeficitPhrase(newTxt)){
+      levels4["노력요함"] = newTxt;
+      return { levels: levels4, remaining: false };
+    }
+  }catch(e){ /* 보정 호출 실패 시 원본 유지 — 아래에서 남은 결핍 표현 여부 재확인 */ }
+  return { levels: levels4, remaining: !!findDeficitPhrase(levels4["노력요함"]||"") };
+}
+
+async function generateLevels4(){
+  const evalElements = $("f2EvalElements").value.trim();
+  if(!evalElements){
+    showMsg($("levels4Msg"), "먼저 위 칸에 '성취기준 기반 평가 요소'를 입력해주세요.", "err");
+    return;
+  }
+  state.evalElements = evalElements;
+  const btn = $("btnGenLevels4"); if(btn) btn.disabled = true;
+  showMsg($("levels4Msg"), "AI가 평가 요소·평가방법·교수지향을 반영해 성취수준을 재구성하고 있습니다…", "info");
+  try{
+    const std = state.selectedStandard;
+    const method = state.methods.find(m=>m.slug===$("f2Method").value);
+    const orient = state.orientations.find(o=>o.slug===$("f2Orientation").value);
+    const system = "당신은 대한민국 초등학교 평가 전문가입니다. 한국교육과정평가원(KICE)의 국가수준 3단계(A/B/C) 성취수준 서술을, 교사가 제시한 평가 요소·평가방법·교수지향을 반영하여 자연스러운 4단계(매우잘함/잘함/보통/노력요함)로 재구성합니다. 공식 3수준의 원문을 그대로 베끼지 말고, A~C 사이의 위계와 표현 수준을 참고하되 평가 요소·평가방법·교수지향에 맞게 구체화하세요. 특히 A와 B 사이, B와 C 사이를 세분화하는 방식으로 접근하세요. 네 단계 모두 학생이 할 수 있는 관찰 가능한 행동으로 서술하고, 특히 '노력요함'은 '~하지 못한다/안 된다/부족하다'처럼 결핍·실패를 서술하지 말고 보통보다 낮은 수준에서 학생이 실제로 보일 수 있는 행동을 긍정문으로 서술하세요. 결과는 JSON 객체 하나만 출력하세요.";
+    let refText = "공식 3수준(A~C) 자료가 없습니다. 성취기준 원문과 아래 정보만 근거로 4단계를 구성하세요.";
+    if(state.performanceLevels.length){
+      refText = "한국교육과정평가원 공식 3수준:\n" + state.performanceLevels.map(l => "  - " + l.level_label + ": " + l.descriptor).join("\n");
+    }
+    const prompt = "성취기준: " + std.code + " " + std.standard_text +
+      "\n교과/학년군/영역: " + std.subject + " / " + std.grade_band + " / " + std.domain +
+      "\n성취기준 기반 평가 요소(교사 작성): " + evalElements +
+      "\n평가방법: " + (method ? method.name + " - " + method.description : "미지정") +
+      "\n교수 지향: " + (orient ? orient.name + " - " + orient.short_desc : "미지정") +
+      "\n\n" + refText +
+      '\n\n위 평가 요소·평가방법·교수지향이 4단계 서술 각각에 자연스럽게 드러나도록 작성하세요. 다음 JSON 스키마의 객체 하나로만 출력하세요:\n{"매우잘함":"...","잘함":"...","보통":"...","노력요함":"..."}';
+    const result = await callLLM(system, prompt, (attempt, delay, m, flag) => {
+      showMsg($("levels4Msg"), retryStatusMsg(attempt, delay, m, flag), "info");
+    });
+    const obj = Array.isArray(result) ? result[0] : result;
+    state.levels4 = {
+      매우잘함: obj["매우잘함"] || obj["Very Excellent"] || "",
+      잘함: obj["잘함"] || "",
+      보통: obj["보통"] || "",
+      노력요함: obj["노력요함"] || ""
+    };
+    const fixResult = await fixLevels4Deficit(state.levels4);
+    state.levels4 = fixResult.levels;
+    state.levels4Confirmed = false;
+    renderLevels4UI();
+    showMsg($("levels4Msg"), "재구성 결과를 확인하시고, 필요하면 직접 수정한 뒤 확정해주세요." +
+      (fixResult.remaining ? " ⚠ '노력요함' 서술에 결핍 표현이 남아있을 수 있으니 직접 확인해주세요." : ""), "ok");
+  }catch(err){
+    showMsg($("levels4Msg"), err.message, "err");
+  }finally{
+    if(btn) btn.disabled = false;
+  }
+}
+
+// 2단계 "다음 단계로 넘어가기 전" 서술형 부분 수정 요청 — 평가방법·교수지향 선택, 평가요소, 성취수준(4단계), 수업 맥락 메모를 포함한
+// 2단계 전체 내용 중 교사가 지목한 부분만 AI가 다시 쓴다. 언급되지 않은 항목은 원래 값을 유지한다.
+async function reviseLevels4(){
+  const instruction = $("levels4RevisionInput").value.trim();
+  if(!instruction){ showMsg($("levels4RevisionMsg"), "수정하고 싶은 내용을 문장으로 적어주세요.", "err"); return; }
+  if(!state.levels4){ showMsg($("levels4RevisionMsg"), "먼저 위에서 성취수준(4단계)을 생성해주세요.", "err"); return; }
+  const btn = $("btnReviseLevels4"); btn.disabled = true;
+  showMsg($("levels4RevisionMsg"), "AI가 요청하신 내용을 반영해 수정하고 있습니다…", "info");
+  try{
+    const std = state.selectedStandard;
+    const method = state.methods.find(m=>m.slug===$("f2Method").value);
+    const orient = state.orientations.find(o=>o.slug===$("f2Orientation").value);
+    const evalElements = $("f2EvalElements").value.trim();
+    const contextNote = $("f2Context").value.trim();
+    const methodsListText = state.methods.map(m => m.slug + ": [" + m.category + "] " + m.name + (m.description ? " - " + m.description : "")).join("\n");
+    const orientListText = state.orientations.map(o => o.slug + ": " + o.name + (o.short_desc ? " - " + o.short_desc : "")).join("\n");
+    const system = "당신은 대한민국 초등학교 평가 전문가입니다. 2단계(평가방법·교수지향 선택, 성취기준 기반 평가 요소, 성취수준 4단계, 수업 맥락 메모)에서 이미 작성된 내용을 교사의 수정 요청에 따라 다듬습니다. 요청과 관련된 항목만 수정하고, 관련 없는 항목은 값을 그대로 반환하거나 null로 표시하세요. 평가방법·교수지향을 바꿔야 한다면 반드시 아래 목록에 있는 slug 값 중 하나만 사용하고, 목록에 없는 값은 만들지 마세요. 성취수준 4단계는 모두 학생이 할 수 있는 관찰 가능한 행동으로 서술하고, 특히 '노력요함'은 '~하지 못한다/안 된다/부족하다'처럼 결핍·실패를 서술하지 말고 보통보다 낮은 수준에서 학생이 실제로 보일 수 있는 행동을 긍정문으로 서술하세요. 결과는 JSON 객체 하나만 출력하세요.";
+    const prompt = "성취기준: " + std.code + " " + std.standard_text +
+      "\n\n[선택 가능한 평가방법 목록]\n" + methodsListText +
+      "\n\n[선택 가능한 교수지향 목록]\n" + orientListText +
+      "\n\n현재 2단계 내용" +
+      "\n- 평가방법: " + (method ? method.slug + " (" + method.name + ")" : "미지정") +
+      "\n- 교수 지향: " + (orient ? orient.slug + " (" + orient.name + ")" : "미지정") +
+      "\n- 성취기준 기반 평가 요소: " + (evalElements || "(작성 안 함)") +
+      "\n- 성취수준(4단계):\n" + LEVEL4_KEYS.map(k => "  · " + k + ": " + (state.levels4[k]||"")).join("\n") +
+      "\n- 수업 맥락 메모: " + (contextNote || "(작성 안 함)") +
+      "\n\n교사의 수정 요청: " + instruction +
+      '\n\n요청을 반영해 필요한 항목만 다시 작성하세요. 다음 JSON 스키마의 객체 하나로만 출력하세요(바꾸지 않는 항목은 모두 null로 표시):\n' +
+      '{"method_slug":null,"orientation_slug":null,"evaluation_elements":null,"context_note":null,"매우잘함":null,"잘함":null,"보통":null,"노력요함":null}';
+    const result = await callLLM(system, prompt, (attempt, delay, m, flag) => {
+      showMsg($("levels4RevisionMsg"), retryStatusMsg(attempt, delay, m, flag), "info");
+    });
+    const obj = Array.isArray(result) ? result[0] : result;
+
+    const changed = [];
+    if(obj.method_slug && state.methods.some(m=>m.slug===obj.method_slug) && obj.method_slug !== $("f2Method").value){
+      $("f2Method").value = obj.method_slug;
+      changed.push("평가방법");
+    }
+    if(obj.orientation_slug && state.orientations.some(o=>o.slug===obj.orientation_slug) && obj.orientation_slug !== $("f2Orientation").value){
+      $("f2Orientation").value = obj.orientation_slug;
+      renderOrientationInfo();
+      changed.push("교수지향");
+    }
+    if(obj.evaluation_elements && obj.evaluation_elements.trim() && obj.evaluation_elements.trim() !== evalElements){
+      $("f2EvalElements").value = obj.evaluation_elements.trim();
+      state.evalElements = obj.evaluation_elements.trim();
+      changed.push("평가요소");
+    }
+    if(obj.context_note && obj.context_note.trim() && obj.context_note.trim() !== contextNote){
+      $("f2Context").value = obj.context_note.trim();
+      state.contextNote = obj.context_note.trim();
+      changed.push("수업 맥락 메모");
+    }
+    const prevLevels = Object.assign({}, state.levels4);
+    state.levels4 = {
+      매우잘함: obj["매우잘함"] || state.levels4["매우잘함"],
+      잘함: obj["잘함"] || state.levels4["잘함"],
+      보통: obj["보통"] || state.levels4["보통"],
+      노력요함: obj["노력요함"] || state.levels4["노력요함"]
+    };
+    const fixResult = await fixLevels4Deficit(state.levels4);
+    state.levels4 = fixResult.levels;
+    if(LEVEL4_KEYS.some(k => state.levels4[k] !== prevLevels[k])) changed.push("성취수준(4단계)");
+
+    state.levels4Confirmed = false;
+    renderLevels4UI();
+    $("levels4RevisionInput").value = "";
+    const changedText = changed.length ? (" (" + [...new Set(changed)].join(", ") + ")") : "";
+    showMsg($("levels4RevisionMsg"), "요청하신 내용을 반영했습니다" + changedText + ". 아래 내용을 확인하고 다시 확정해주세요." +
+      (fixResult.remaining ? " ⚠ '노력요함' 서술에 결핍 표현이 남아있을 수 있으니 직접 확인해주세요." : ""), "ok");
+  }catch(err){
+    showMsg($("levels4RevisionMsg"), err.message, "err");
+  }finally{
+    btn.disabled = false;
+  }
+}
+
+async function confirmLevels4(){
+  state.levels4Confirmed = true;
+  renderLevels4UI();
+  showMsg($("levels4Msg"), "성취수준(4단계)을 확정했습니다. 이제 수업 맥락 메모를 작성할 수 있습니다.", "ok");
+  try{
+    if(state.agentSessionId){
+      await pgPatch("agent_sessions", "id=eq."+state.agentSessionId, { confirmed_levels: state.levels4 });
+    }
+  }catch(e){ /* 세션이 아직 없으면 다음 저장 시점에 함께 반영됨 */ }
+}
+
+/* ---------------- STEP 3: 평가과제 생성 ---------------- */
+async function ensureAgentSession(){
+  const std = state.selectedStandard;
+  const method = state.methods.find(m=>m.slug===$("f2Method").value);
+  const orient = state.orientations.find(o=>o.slug===$("f2Orientation").value);
+  state.contextNote = $("f2Context").value.trim();
+  const payload = {
+    teacher_label: (state.session.user && state.session.user.email) || "",
+    subject: std.subject, grade_band: std.grade_band, domain: std.domain,
+    standard_codes: [std.code],
+    method_slug: method ? method.slug : null,
+    orientation_slug: orient ? orient.slug : null,
+    context_note: state.contextNote,
+    evaluation_elements_note: state.evalElements || null,
+    confirmed_levels: state.levels4Confirmed ? state.levels4 : null,
+    stage: "drafting"
+  };
+  if(state.agentSessionId){
+    await pgPatch("agent_sessions", "id=eq." + state.agentSessionId, payload);
+  } else {
+    const rows = await pgInsert("agent_sessions", [payload]);
+    state.agentSessionId = rows[0].id;
+  }
+}
+
+function buildStandardBlock(){
+  const std = state.selectedStandard;
+  let s = "성취기준: " + std.code + " " + std.standard_text + "\n";
+  s += "교과/학년군/영역: " + std.subject + " / " + std.grade_band + " / " + std.domain + "\n";
+  if(state.evalElements){
+    s += "성취기준 기반 평가 요소(교사 작성, 이를 기준으로 삼으세요): " + state.evalElements + "\n";
+  }
+  if(state.levels4Confirmed && state.levels4){
+    s += "교사가 확정한 4단계 성취수준(이 표현을 기준으로 삼아 세부 채점 요소를 설계하세요):\n";
+    LEVEL4_KEYS.forEach(k => s += "  - " + k + ": " + (state.levels4[k]||"") + "\n");
+  } else if(state.performanceLevels.length){
+    s += "공식 성취수준(참고용, 그대로 베끼지 말고 4단계 설계의 기준점으로만 사용):\n";
+    state.performanceLevels.forEach(l => s += "  - " + l.level_label + ": " + l.descriptor + "\n");
+  }
+  return s;
+}
+
+const DOC_TYPE_LABELS = {
+  assessment_plan_example: "평가계획 예시",
+  essay_assessment: "논술형 평가",
+  administrative_guideline: "행정 지침",
+  growth_oriented_assessment: "성장중심평가",
+  assessment_examples: "평가 예시",
+  assessment_philosophy: "평가 철학",
+  assessment_tools_guide: "평가도구 개발 가이드",
+  curriculum: "교육과정 원문",
+  assessment_guideline: "평가 지침",
+  workbook: "워크북",
+  operation_plan: "운영계획"
+};
+function docTypeLabel(t){ return DOC_TYPE_LABELS[t] || t || "기타"; }
+
+async function loadDocTypes(){
+  try{
+    const rows = await pgGet("knowledge_documents", "select=doc_type");
+    state.docTypes = [...new Set(rows.map(r=>r.doc_type).filter(Boolean))];
+  }catch(e){ state.docTypes = []; }
+}
+
+async function embedForSearch(queryText){
+  return await embedQuery(queryText);
+}
+async function searchByVector(vec, docTypeFilter, matchCount){
+  return await rpc("search_knowledge", { query_embedding: vec, match_count: matchCount || 8, doc_type_filter: docTypeFilter || null });
+}
+async function doSearchKnowledge(queryText, docTypeFilter, matchCount){
+  const vec = await embedForSearch(queryText);
+  return await searchByVector(vec, docTypeFilter, matchCount);
+}
+
+// 특정 doc_type(예: "평가계획 예시자료")에 근거가 쏠리지 않도록, 우선 전체 문서유형에서 폭넓게 검색한 뒤
+// 아직 대표되지 못한 문서유형(장학자료 종류)이 있으면 그 유형에서 별도로 보강 검색해 함께 근거로 삼는다.
+async function gatherDiverseGrounding(queryText){
+  if(!state.docTypes.length) await loadDocTypes();
+  const vec = await embedForSearch(queryText);
+  const chunks = await searchByVector(vec, null, 12);
+  const seenIds = new Set(chunks.map(c=>c.chunk_id));
+  const seenTypes = new Set(chunks.map(c=>c.doc_type));
+  const missingTypes = state.docTypes.filter(t => !seenTypes.has(t));
+  for(const t of missingTypes){
+    try{
+      const extra = await searchByVector(vec, t, 2);
+      extra.forEach(c=>{ if(!seenIds.has(c.chunk_id)){ chunks.push(c); seenIds.add(c.chunk_id); } });
+    }catch(e){ /* 특정 문서유형 보강 검색 실패는 무시하고 계속 진행 */ }
+  }
+  return chunks.slice(0, 14);
+}
+
+// 근거자료 검색 전, LLM이 성취기준·평가방법·교수지향만으로 구상한 1차 초안을 교사에게 먼저 보여준다.
+// (이후 근거자료로 확인·보완되어 최종 2~3안으로 바뀌므로, 아직 확정된 내용이 아님을 함께 안내한다.)
+function renderTaskDrafts(){
+  const box = $("taskDraftBox");
+  box.innerHTML = "";
+  if(!state.taskDrafts.length) return;
+  box.appendChild(el("h3",{},["AI가 구상한 1차 초안 (근거자료 확인 전)"]));
+  box.appendChild(el("div",{class:"draft-note"},["아직 실제 장학자료로 확인하지 않은 구상 단계입니다. 아래에서 근거자료를 검색해 이 초안을 확인·보완한 뒤 최종 평가과제 안으로 다시 제시해드립니다."]));
+  state.taskDrafts.forEach(v=>{
+    const card = el("div",{class:"draft-card"});
+    card.appendChild(el("h4",{},[v.variant_label || "초안"]));
+    if(v.evaluation_elements && v.evaluation_elements.length){
+      const elemBlock = el("div",{class:"kv"});
+      elemBlock.appendChild(el("b",{},["평가요소"]));
+      elemBlock.appendChild(document.createTextNode(" " + v.evaluation_elements.join(", ")));
+      card.appendChild(elemBlock);
+    }
+    if(v.scenario_summary){
+      const scBlock = el("div",{class:"kv"});
+      scBlock.appendChild(el("b",{},["장면 요약"]));
+      scBlock.appendChild(document.createTextNode(" " + v.scenario_summary));
+      card.appendChild(scBlock);
+    }
+    if(v.item_approach){
+      const apBlock = el("div",{class:"kv"});
+      apBlock.appendChild(el("b",{},["문항 구상"]));
+      apBlock.appendChild(document.createTextNode(" " + v.item_approach));
+      card.appendChild(apBlock);
+    }
+    if(v.key_search_terms && v.key_search_terms.length){
+      const termBlock = el("div",{class:"kv"});
+      termBlock.appendChild(el("b",{},["확인할 핵심어"]));
+      v.key_search_terms.forEach(t => termBlock.appendChild(el("span",{class:"tag"},[t])));
+      card.appendChild(termBlock);
+    }
+    box.appendChild(card);
+  });
+}
+
+function renderGrounding(){
+  const box = $("groundingBox");
+  box.innerHTML = "";
+  if(!state.groundingChunks.length) return;
+  const typeCount = new Set(state.groundingChunks.map(c=>c.doc_type)).size;
+  box.appendChild(el("h3",{},["검색된 근거자료 (" + state.groundingChunks.length + "건 · " + typeCount + "종 장학자료)"]));
+  const list = el("div",{class:"list"});
+  state.groundingChunks.forEach(c=>{
+    list.appendChild(el("div",{class:"list-item"},[
+      el("span",{class:"tag"},[docTypeLabel(c.doc_type)]),
+      el("span",{class:"tag"},[c.title]),
+      document.createTextNode(" p." + c.page_from + (c.page_to && c.page_to!==c.page_from? "-"+c.page_to:"") + "  " + (c.heading||"")),
+    ]));
+  });
+  box.appendChild(list);
+}
+
+async function generateTasks(){
+  const method = state.methods.find(m=>m.slug===$("f2Method").value);
+  const orient = state.orientations.find(o=>o.slug===$("f2Orientation").value);
+  const btn = $("btnGenTasks"); btn.disabled = true;
+  $("taskDraftBox").innerHTML = "";
+  $("groundingBox").innerHTML = "";
+  showMsg($("taskGenMsg"), "AI가 1단계 성취기준과 2단계 평가방법·교수지향을 바탕으로 초안을 구상하고 있습니다…", "info");
+  try{
+    await ensureAgentSession();
+    const std = state.selectedStandard;
+
+    /* 1단계: 근거자료 검색 전, LLM이 성취기준·평가방법·교수지향에 대한 자체 지식과 추론만으로 평가과제 초안 개념을 구상 */
+    const draftSystem = "당신은 대한민국 초등학교 교사를 돕는 평가도구 설계 전문가입니다. 지금은 실제 장학자료를 검색해 확인하기 전 단계이므로, 주어진 성취기준과 교사가 선택한 평가방법·교수지향, 평가요소만을 바탕으로 당신이 알고 있는 초등 평가 설계 지식과 추론을 활용해 평가과제 '초안 개념'을 구상하세요. 완성된 문항 문장을 다듬기보다 방향과 핵심 아이디어를 잡는 데 집중하세요(이 초안은 이후 실제 경기도교육청/교육부 장학자료로 확인·보완될 예정입니다). 초등학생 대상 평가임을 고려해 하나의 완결된 글(에세이) 형태의 문항 1개보다는 낮은→중간→종합 인지 수준의 흐름을 염두에 두세요. 서로 다른 접근의 초안 2~3개를 구상하세요. 반드시 JSON 배열만 출력하세요.";
+    const draftPrompt = buildStandardBlock() +
+      "\n평가방법: " + (method?method.name+" - "+method.description:"미지정") +
+      "\n교수 지향: " + (orient?orient.name+" - "+orient.short_desc:"미지정") +
+      "\n수업 맥락: " + (state.contextNote || "(없음)") +
+      "\n\n위 정보를 바탕으로 서로 다른 접근의 평가과제 초안 개념 2~3개를 구상하세요. 각 초안은 다음 JSON 스키마를 따르는 객체입니다(다른 설명 문장 금지):\n" +
+      '[{"variant_label":"A안 (짧은 특징)","evaluation_elements":["...","..."],"scenario_summary":"평가 장면에 대한 1~2문장 요약","item_approach":"처음(낮은 인지 수준)/중간/마지막(종합적 인지 수준) 흐름을 어떻게 구성할지에 대한 짧은 구상","key_search_terms":["이 초안을 근거자료로 확인할 때 검색해 볼 핵심어","..."]}]';
+    const draftResult = await callLLM(draftSystem, draftPrompt, (attempt, delay, m, flag) => {
+      showMsg($("taskGenMsg"), retryStatusMsg(attempt, delay, m, flag), "info");
+    });
+    const draftVariants = Array.isArray(draftResult) ? draftResult : (draftResult.variants || draftResult.drafts || []);
+    if(!draftVariants.length) throw new Error("LLM이 평가과제 초안을 구상하지 못했습니다. 다시 시도해주세요.");
+    state.taskDrafts = draftVariants;
+    renderTaskDrafts();
+
+    /* 2단계: 구상한 초안을 반영해 Supabase 근거자료(다양한 장학자료)를 검색 */
+    showMsg($("taskGenMsg"), "구상한 초안을 바탕으로 근거자료를 검색하고 있습니다…", "info");
+    const draftTermsText = draftVariants.map(v => (v.evaluation_elements||[]).join(" ") + " " + (v.key_search_terms||[]).join(" ")).join(" ");
+    const searchQuery = [std.code, std.standard_text, method?method.name:"", orient?orient.name:"", state.contextNote, draftTermsText].filter(Boolean).join(" / ");
+    state.groundingChunks = await gatherDiverseGrounding(searchQuery);
+    renderGrounding();
+
+    /* 3단계: 검색된 근거자료로 초안을 확인·수정하여 최종 2~3안 확정 */
+    showMsg($("taskGenMsg"), "근거자료로 초안을 확인·보완하며 최종안을 작성하고 있습니다…", "info");
+    const system = "당신은 대한민국 초등학교 교사를 돕는 평가도구 설계 전문가입니다. 2022 개정 교육과정과 경기도교육청/교육부 평가 장학자료를 근거로, 실제 수업에서 바로 쓸 수 있는 평가과제를 설계합니다. 아래 근거자료는 평가계획 예시뿐 아니라 논술형 평가, 평가도구 개발 가이드, 성장중심평가, 교육과정 원문 등 다양한 장학자료에서 검색된 것이니 한두 자료에 치우치지 말고 여러 근거를 골고루 활용하세요. 성취기준 문구를 임의로 창작하지 말고 주어진 원문을 그대로 인용하세요. " +
+      "아래에는 근거자료 검색 전 AI가 자체적으로 구상한 1차 초안도 함께 제공됩니다. 이 초안의 방향과 아이디어는 존중하되, 근거자료와 어긋나거나 근거자료가 제시하는 더 나은 접근이 있다면 적극적으로 수정·보완하세요. 초안을 무비판적으로 그대로 베끼지 마세요. " +
+      "초등학생 대상 평가임을 항상 고려하세요 — '논리적으로 서술한다'는 것이 여러 문단으로 이루어진 하나의 완결된 글(에세이 형태)을 의미하지 않습니다. 하나의 크고 모호한 문항과 별도의 '작성 조건'을 제시하는 방식은 피하세요. " +
+      "evaluation_elements, scenario_lines, items(text)는 모두 학생과 학부모에게 그대로 전달되는 내용이므로, 해당 학년군 초등학생이 이해할 수 있는 쉽고 일상적인 낱말과 표현으로 쓰세요. '극댓값', '극솟값'처럼 학년 수준을 벗어난 중등 이상 수학·과학 개념어나 전문 용어는 사용하지 말고, 필요하면 '가장 높은 때', '가장 낮은 때'처럼 쉬운 말로 풀어 쓰세요. 반드시 JSON 배열만 출력하세요.";
+    const groundingText = state.groundingChunks.slice(0,12).map((c,i)=>
+      "[근거"+(i+1)+" · " + docTypeLabel(c.doc_type) + "] " + c.title + " p."+c.page_from + "\n" + c.content.slice(0,600)
+    ).join("\n\n");
+    const draftSummaryText = draftVariants.map((v,i)=>
+      "[초안 "+(i+1)+" · " + (v.variant_label||"") + "]\n평가요소: " + (v.evaluation_elements||[]).join(", ") +
+      "\n장면 요약: " + (v.scenario_summary||"") + "\n문항 구상: " + (v.item_approach||"")
+    ).join("\n\n");
+    const prompt = buildStandardBlock() +
+      "\n평가방법: " + (method?method.name+" - "+method.description:"미지정") +
+      "\n교수 지향: " + (orient?orient.name+" - "+orient.short_desc:"미지정") +
+      "\n수업 맥락: " + (state.contextNote || "(없음)") +
+      "\n\n[근거자료 검색 전 1차 초안 — AI 자체 구상]\n" + draftSummaryText +
+      "\n\n다음은 이 초안을 확인하기 위해 검색된 실제 장학자료 근거입니다:\n" + groundingText +
+      "\n\n위 근거자료로 1차 초안을 확인하고, 근거와 어긋나거나 부족한 부분은 수정·보완하여 서로 다른 접근의 평가과제 최종 2~3안을 작성하세요. 각 안은 다음을 지켜 작성하세요:\n" +
+      "1) evaluation_elements: 성취기준 기반 평가요소를 의미 단위로 나눈 짧은 문구들의 배열 (한 항목 = 한 가지 평가요소).\n" +
+      "2) scenario_lines: 수업/평가 장면 서술을 의미 단위(도입 상황 → 학생이 처한 맥락 → 과제 제시)로 나눈 문장들의 배열. 한 항목에 여러 의미를 섞지 말고, 교사가 한눈에 읽히도록 짧게 끊으세요.\n" +
+      "3) items: 하나의 완결된 글을 요구하는 문항 1개 대신, 선택된 평가방법(" + (method?method.name:"미지정") + ")에 맞게 '처음(evaluation_elements와 관련된 낮은 인지 수준: 확인·기억·이해)' → '중간(관련된 중간 인지 수준: 적용·분석)' → '마지막(관련된 종합적 인지 수준: 종합·평가·창안)' 3단계 흐름으로 실제 학생에게 제시할 문항/과제 텍스트를 구성하세요. 각 단계는 stage('처음'|'중간'|'마지막'), cognitive_level(그 단계가 겨냥하는 인지 수준을 짧게 서술), text(학생에게 제시할 실제 문항/지시문) 세 필드를 가진 객체입니다.\n" +
+      "4) 평가과제를 수행하는 데 사진이나 이미지 자료가 필요하면 needs_image를 true로 하고, 그 이미지를 생성형 AI(이미지 생성 모델)로 만들 때 쓸 프롬프트를 image_prompt_kr(국문)과 image_prompt_en(영문) 각각 작성하세요. 이미지가 필요 없으면 needs_image는 false, 두 프롬프트는 빈 문자열(\"\")로 두세요.\n" +
+      "다음 JSON 스키마를 따르는 객체들의 배열로만 출력하세요 (다른 설명 문장 금지):\n" +
+      '[{"variant_label":"A안 (짧은 특징)","evaluation_elements":["...","..."],"scenario_lines":["...","...","..."],"items":[{"stage":"처음","cognitive_level":"...","text":"..."},{"stage":"중간","cognitive_level":"...","text":"..."},{"stage":"마지막","cognitive_level":"...","text":"..."}],"needs_image":false,"image_prompt_kr":"","image_prompt_en":""}]';
+
+    const result = await callLLM(system, prompt, (attempt, delay, m, flag) => {
+      showMsg($("taskGenMsg"), retryStatusMsg(attempt, delay, m, flag), "info");
+    });
+    const variants = Array.isArray(result) ? result : (result.variants || result.tasks || []);
+    if(!variants.length) throw new Error("LLM이 평가과제를 생성하지 못했습니다. 다시 시도해주세요.");
+    const groundingSources = state.groundingChunks.slice(0,12).map(c=>({chunk_id:c.chunk_id, title:c.title, doc_type:c.doc_type, page_from:c.page_from, page_to:c.page_to}));
+    state.taskVariants = variants.map(v=>({
+      variant_label: v.variant_label || v.label || "안",
+      evaluation_elements: v.evaluation_elements || [],
+      scenario_lines: v.scenario_lines || (v.scenario ? String(v.scenario).split(/\n+/).map(s=>s.trim()).filter(Boolean) : []),
+      items: (v.items && v.items.length) ? v.items.map(it=>({
+        stage: it.stage || "", cognitive_level: it.cognitive_level || it.level || "", text: it.text || it.item_text || ""
+      })) : (v.item_text ? [{stage:"", cognitive_level:"", text: v.item_text}] : []),
+      needs_image: !!v.needs_image,
+      image_prompt_kr: v.image_prompt_kr || "",
+      image_prompt_en: v.image_prompt_en || "",
+      grounding_sources: groundingSources
+    }));
+
+    const taskPayloads = state.taskVariants.map(v => ({
+      standard_codes: [std.code], standard_text: std.standard_text,
+      assessment_method: method?method.slug:null, teaching_orientation: orient?orient.slug:null,
+      unit_context: state.contextNote,
+      evaluation_elements: v.evaluation_elements, scenario_lines: v.scenario_lines, items: v.items,
+      needs_image: v.needs_image, image_prompt_kr: v.image_prompt_kr, image_prompt_en: v.image_prompt_en,
+      grounding_sources: groundingSources
+    }));
+    const rows = await pgInsert("task_proposals", taskPayloads.map((p,i)=>({
+      session_id: state.agentSessionId, variant_label: state.taskVariants[i].variant_label, payload: p
+    })));
+    rows.forEach((r,i)=>{ state.taskVariants[i].id = r.id; state.taskVariants[i]._dbPayload = taskPayloads[i]; });
+
+    state.selectedTaskIdx = -1;
+    $("taskNextBar").classList.add("hidden");
+    $("taskGateHint").classList.add("hidden");
+    $("taskRevisionField").classList.add("hidden");
+    renderTaskCards();
+    showMsg($("taskGenMsg"), "AI가 구상한 초안을 실제 근거자료로 확인·보완하여 평가과제 " + state.taskVariants.length + "안을 생성했습니다. 검토 후 하나를 선택하세요.", "ok");
+  }catch(err){
+    showMsg($("taskGenMsg"), err.message, "err");
+  }finally{
+    btn.disabled = false;
+  }
+}
+
+function renderTaskCards(){
+  const box = $("taskCards");
+  box.innerHTML = "";
+  state.taskVariants.forEach((v,i)=>{
+    const card = el("div",{class:"card" + (i===state.selectedTaskIdx?" selected":"")});
+    card.appendChild(el("h4",{class:"variant-title"},[v.variant_label]));
+
+    const elemBlock = el("div",{class:"kv"});
+    elemBlock.appendChild(el("b",{},["평가요소"]));
+    const elemList = el("ul",{style:"margin:4px 0 0 18px;padding:0;"});
+    (v.evaluation_elements||[]).forEach(e=> elemList.appendChild(el("li",{},[e])));
+    elemBlock.appendChild(elemList);
+    card.appendChild(elemBlock);
+
+    const sceneBlock = el("div",{class:"kv"});
+    sceneBlock.appendChild(el("b",{},["평가장면"]));
+    (v.scenario_lines||[]).forEach(line=> sceneBlock.appendChild(el("div",{style:"margin-top:2px;"},[line])));
+    card.appendChild(sceneBlock);
+
+    const itemBlock = el("div",{class:"kv"});
+    itemBlock.appendChild(el("b",{},["평가문항 (처음→중간→마지막)"]));
+    (v.items||[]).forEach(it=>{
+      const line = el("div",{style:"margin-top:6px;"});
+      const label = [it.stage, it.cognitive_level].filter(Boolean).join(" · ");
+      if(label) line.appendChild(el("span",{class:"tag"},[label]));
+      line.appendChild(el("div",{style:"margin-top:2px;"},[it.text]));
+      itemBlock.appendChild(line);
+    });
+    card.appendChild(itemBlock);
+
+    if(v.needs_image){
+      const imgBlock = el("div",{class:"kv",style:"background:var(--chip);border-radius:8px;padding:8px 10px;margin-top:8px;"});
+      imgBlock.appendChild(el("b",{},["생성형 AI 이미지 프롬프트"]));
+      imgBlock.appendChild(el("div",{style:"margin-top:4px;"},["국문: " + v.image_prompt_kr]));
+      imgBlock.appendChild(el("div",{style:"margin-top:2px;"},["EN: " + v.image_prompt_en]));
+      card.appendChild(imgBlock);
+    }
+
+    if((v.grounding_sources||[]).length){
+      const det = el("details",{class:"src"});
+      det.appendChild(el("summary",{},["출처·근거 (교사용 — 최종 산출물에는 포함되지 않음)"]));
+      const srcList = el("div",{style:"margin-top:6px;"});
+      v.grounding_sources.forEach(s=>{
+        srcList.appendChild(el("div",{style:"margin-top:2px;"},[
+          "[" + docTypeLabel(s.doc_type) + "] " + s.title + " p." + s.page_from + (s.page_to && s.page_to!==s.page_from ? "-"+s.page_to : "")
+        ]));
+      });
+      det.appendChild(srcList);
+      card.appendChild(det);
+    }
+
+    const btn = el("button", {class: i===state.selectedTaskIdx?"secondary":""}, [i===state.selectedTaskIdx?"선택됨":"이 안 선택"]);
+    btn.onclick = async () => {
+      state.selectedTaskIdx = i;
+      renderTaskCards();
+      $("taskNextBar").classList.remove("hidden");
+      $("taskGateHint").classList.remove("hidden");
+      $("taskRevisionField").classList.remove("hidden");
+      try{
+        await pgPatch("agent_sessions", "id=eq."+state.agentSessionId, { selected_task: {
+          variant_label: v.variant_label, evaluation_elements: v.evaluation_elements,
+          scenario_lines: v.scenario_lines, items: v.items, needs_image: v.needs_image,
+          image_prompt_kr: v.image_prompt_kr, image_prompt_en: v.image_prompt_en
+        }});
+        if(v.id) await pgPatch("task_proposals", "id=eq."+v.id, { is_selected: true });
+      }catch(e){}
+    };
+    card.appendChild(el("div",{class:"btnbar"},[btn]));
+    box.appendChild(card);
+  });
+}
+
+// 3단계 "다음 단계로 넘어가기 전" 서술형 부분 수정 요청 — 선택된 평가과제 하나를 교사의 문장 지시에 따라 다시 쓴다.
+async function reviseSelectedTask(){
+  const instruction = $("taskRevisionInput").value.trim();
+  if(!instruction){ showMsg($("taskRevisionMsg"), "수정하고 싶은 내용을 문장으로 적어주세요.", "err"); return; }
+  if(state.selectedTaskIdx < 0){ showMsg($("taskRevisionMsg"), "먼저 위에서 평가과제 안을 하나 선택해주세요.", "err"); return; }
+  const v = state.taskVariants[state.selectedTaskIdx];
+  const method = state.methods.find(m=>m.slug===$("f2Method").value);
+  const orient = state.orientations.find(o=>o.slug===$("f2Orientation").value);
+  const btn = $("btnReviseTask"); btn.disabled = true;
+  showMsg($("taskRevisionMsg"), "AI가 요청하신 내용을 반영해 수정하고 있습니다…", "info");
+  try{
+    const system = "당신은 대한민국 초등학교 교사를 돕는 평가도구 설계 전문가입니다. 이미 작성된 평가과제 초안 하나를 교사의 수정 요청에 따라 다시 씁니다. 요청과 관련 없는 부분은 원래 취지를 유지하되 자연스럽게 다듬으세요. 하나의 완결된 글을 요구하는 문항 1개가 아니라 처음(낮은 인지 수준)→중간(중간 인지 수준)→마지막(종합적 인지 수준) 3단계 흐름 구조는 그대로 유지하세요. 학생과 학부모에게 그대로 전달되는 내용이므로 초등학생이 이해할 수 있는 쉬운 낱말로 쓰고, '극댓값', '극솟값'처럼 학년 수준을 벗어난 전문 용어는 사용하지 마세요. 반드시 JSON 객체 하나만 출력하세요.";
+    const prompt = buildStandardBlock() +
+      "\n평가방법: " + (method?method.name:"미지정") + " / 교수 지향: " + (orient?orient.name:"미지정") +
+      "\n\n현재 평가과제 초안(" + v.variant_label + "):\n" +
+      "평가요소: " + (v.evaluation_elements||[]).join(", ") + "\n" +
+      "평가장면: " + (v.scenario_lines||[]).join(" ") + "\n" +
+      "평가문항: " + (v.items||[]).map(it=>"["+it.stage+"] "+it.text).join("  /  ") + "\n" +
+      "이미지 필요 여부: " + (v.needs_image ? ("필요 (국문 프롬프트: " + v.image_prompt_kr + ")") : "불필요") +
+      "\n\n교사의 수정 요청: " + instruction +
+      '\n\n위 요청을 반영해 이 평가과제 전체를 다시 작성하세요. 다음 JSON 스키마의 객체 하나로만 출력하세요:\n' +
+      '{"evaluation_elements":["...","..."],"scenario_lines":["...","...","..."],"items":[{"stage":"처음","cognitive_level":"...","text":"..."},{"stage":"중간","cognitive_level":"...","text":"..."},{"stage":"마지막","cognitive_level":"...","text":"..."}],"needs_image":false,"image_prompt_kr":"","image_prompt_en":""}';
+    const result = await callLLM(system, prompt, (attempt, delay, m, flag) => {
+      showMsg($("taskRevisionMsg"), retryStatusMsg(attempt, delay, m, flag), "info");
+    });
+    const obj = Array.isArray(result) ? result[0] : result;
+    if(obj.evaluation_elements) v.evaluation_elements = obj.evaluation_elements;
+    if(obj.scenario_lines) v.scenario_lines = obj.scenario_lines;
+    if(obj.items && obj.items.length){
+      v.items = obj.items.map(it=>({ stage: it.stage || "", cognitive_level: it.cognitive_level || it.level || "", text: it.text || it.item_text || "" }));
+    }
+    if(obj.needs_image != null) v.needs_image = !!obj.needs_image;
+    if(obj.image_prompt_kr != null) v.image_prompt_kr = obj.image_prompt_kr;
+    if(obj.image_prompt_en != null) v.image_prompt_en = obj.image_prompt_en;
+
+    renderTaskCards();
+    $("taskNextBar").classList.remove("hidden");
+    $("taskGateHint").classList.remove("hidden");
+    $("taskRevisionField").classList.remove("hidden");
+    $("taskRevisionInput").value = "";
+    showMsg($("taskRevisionMsg"), "요청하신 내용을 반영했습니다. 아래에서 다시 확인해주세요.", "ok");
+
+    try{
+      const mergedPayload = Object.assign({}, v._dbPayload, {
+        evaluation_elements: v.evaluation_elements, scenario_lines: v.scenario_lines, items: v.items,
+        needs_image: v.needs_image, image_prompt_kr: v.image_prompt_kr, image_prompt_en: v.image_prompt_en
+      });
+      v._dbPayload = mergedPayload;
+      await pgPatch("agent_sessions", "id=eq."+state.agentSessionId, { selected_task: {
+        variant_label: v.variant_label, evaluation_elements: v.evaluation_elements,
+        scenario_lines: v.scenario_lines, items: v.items, needs_image: v.needs_image,
+        image_prompt_kr: v.image_prompt_kr, image_prompt_en: v.image_prompt_en
+      }});
+      if(v.id) await pgPatch("task_proposals", "id=eq."+v.id, { payload: mergedPayload });
+    }catch(e){ /* DB 반영 실패해도 화면은 이미 갱신되어 있음 */ }
+  }catch(err){
+    showMsg($("taskRevisionMsg"), err.message, "err");
+  }finally{
+    btn.disabled = false;
+  }
+}
+
+/* '노력요함' 결핍·실패 표현 자동 검출/보정 — 프롬프트 지시만으로는 LLM이 놓칠 수 있어 생성 후 한 번 더 점검·재작성한다 */
+const DEFICIT_PHRASES = ["부족","어려움","어렵","못하","못 하","안 되","안된다","도움이 필요","한계가 있","미흡","곤란","힘들"];
+function findDeficitPhrase(text){
+  const t = text || "";
+  return DEFICIT_PHRASES.find(p => t.includes(p)) || null;
+}
+
+async function fixRubricDeficits(rubricVariants){
+  const flagged = [];
+  rubricVariants.forEach((v, vi)=>{
+    (v.criteria||[]).forEach((c, ci)=>{
+      const txt = (c.levels||{})["노력요함"] || "";
+      if(findDeficitPhrase(txt)) flagged.push({ vi, ci, criterion: c.criterion||"", normalTxt: (c.levels||{})["보통"]||"", badTxt: txt });
+    });
+  });
+  if(!flagged.length) return { variants: rubricVariants, remaining: [] };
+  try{
+    const system2 = "당신은 초등 평가 채점기준표 감수자입니다. 아래 '노력요함' 서술들에는 결핍·실패 표현('부족하다','어려움이 있다','~하지 못한다','도움이 필요하다','한계가 있다' 등)이 포함되어 있어 수정이 필요합니다. 각 항목을 그 채점요소를 기준으로 '보통'보다 낮은 수준이지만 학생이 실제로 할 수 있는 관찰 가능한 행동으로, 반드시 '~할 수 있다'로 끝나는 긍정문 한 문장으로 다시 쓰세요. 결핍·실패·부정 표현은 절대 사용하지 마세요. 채점요소의 취지는 유지하세요. JSON 배열만 출력하세요.";
+    const prompt2 = "다음 각 항목의 '노력요함' 서술을 다시 쓰세요:\n\n" + flagged.map((f,i)=>
+      "[" + i + "] 채점요소: " + f.criterion + "\n  보통 수준(참고, 이보다 낮은 수준으로): " + f.normalTxt + "\n  잘못 작성된 노력요함: " + f.badTxt
+    ).join("\n\n") + '\n\n다음 JSON 스키마의 배열로만 출력하세요 (index는 위 [ ] 번호와 동일하게):\n[{"index":0,"노력요함":"..."}]';
+    const result2 = await callLLM(system2, prompt2);
+    const fixes = Array.isArray(result2) ? result2 : (result2.items || result2.fixes || []);
+    fixes.forEach(fx=>{
+      const f = flagged[fx.index];
+      const newTxt = fx["노력요함"];
+      if(f && newTxt && !findDeficitPhrase(newTxt)){
+        rubricVariants[f.vi].criteria[f.ci].levels["노력요함"] = newTxt;
+      }
+    });
+  }catch(e){ /* 보정 호출 실패 시 원본 유지 — 남은 항목은 아래에서 교사에게 알림 */ }
+  const remaining = [];
+  rubricVariants.forEach(v=> (v.criteria||[]).forEach(c=>{
+    if(findDeficitPhrase((c.levels||{})["노력요함"]||"")) remaining.push(c.criterion||"");
+  }));
+  return { variants: rubricVariants, remaining };
+}
+
+/* ---------------- STEP 4: 채점기준표 생성 ---------------- */
+async function generateRubrics(){
+  if(state.selectedTaskIdx < 0){ showMsg($("rubricGenMsg"), "먼저 3단계에서 평가과제를 선택해주세요.", "err"); return; }
+  const btn = $("btnGenRubrics"); btn.disabled = true;
+  showMsg($("rubricGenMsg"), "AI가 채점기준표 초안을 작성하고 있습니다…", "info");
+  try{
+    const task = state.taskVariants[state.selectedTaskIdx];
+    const system = "당신은 대한민국 초등학교 교사를 돕는 평가도구 설계 전문가입니다. 4단계(매우잘함/잘함/보통/노력요함) 분석적 채점기준표를 채점 요소별로 작성합니다. 공식 성취수준(A/B/C) 서술을 그대로 베끼지 말고 4단계로 자연스럽게 확장하는 근거로만 사용하세요. " +
+      "특히 '노력요함' 단계는 '~하지 못한다', '~이 안 된다', '~이 부족하다'처럼 결핍·실패를 서술하지 마세요. 대신 해당 채점요소와 관련하여 '보통'보다 낮은 수준이지만 학생이 실제로 보일 수 있는 관찰 가능한 행동을 긍정문으로 서술하세요(예: 도움을 받아 ~할 수 있다, 간단한 수준에서 ~할 수 있다, 일부 요소만 ~할 수 있다 등). 매우잘함·잘함·보통 역시 모두 '~할 수 있다' 형태의 관찰 가능한 행동으로 서술하세요. " +
+      "이 채점기준표는 채점요소(criterion) 이름을 포함해 학생과 학부모에게 그대로 전달됩니다. 해당 학년군 초등학생이 이해할 수 있는 쉽고 일상적인 낱말과 표현을 쓰고, '극댓값', '극솟값'처럼 학년 수준을 벗어난 중등 이상 수학·과학 개념어나 전문 용어는 사용하지 마세요(필요하면 '가장 높은 때', '가장 낮은 때'처럼 쉬운 말로 풀어 쓰세요). 반드시 JSON 배열만 출력하세요.";
+    const groundingText = state.groundingChunks.slice(0,10).map((c,i)=> "[근거"+(i+1)+" · " + docTypeLabel(c.doc_type) + "] " + c.title + " p."+c.page_from + "\n" + c.content.slice(0,500)).join("\n\n");
+    const prompt = buildStandardBlock() +
+      "\n선택된 평가과제: " + task.variant_label +
+      "\n평가요소: " + (task.evaluation_elements||[]).join(", ") +
+      "\n평가장면: " + (task.scenario_lines||[]).join(" ") +
+      "\n평가문항(처음→중간→마지막): " + (task.items||[]).map(it=>"["+it.stage+"] "+it.text).join("  /  ") +
+      "\n\n근거자료:\n" + groundingText +
+      "\n\n위 평가요소마다 채점 기준(criterion)을 하나씩 만들고, 각 기준에 대해 매우잘함/잘함/보통/노력요함 4단계 서술을 작성하세요. 네 단계 모두 학생이 할 수 있는 관찰 가능한 행동으로 서술하되, '노력요함'은 결코 부정문(할 수 없다/안 된다/부족하다)으로 쓰지 말고 보통보다 낮은 수준에서 학생이 실제로 해낼 수 있는 행동을 긍정문으로 쓰세요. 서로 다른 강조점을 가진 채점기준표 2안을 제안하세요. 다음 JSON 스키마의 배열로만 출력하세요:\n" +
+      '[{"variant_label":"가안 (짧은 특징)","criteria":[{"criterion":"...","levels":{"매우잘함":"...","잘함":"...","보통":"...","노력요함":"..."}}]}]';
+
+    const result = await callLLM(system, prompt, (attempt, delay, m, flag) => {
+      showMsg($("rubricGenMsg"), retryStatusMsg(attempt, delay, m, flag), "info");
+    });
+    const variants = Array.isArray(result) ? result : (result.variants || result.rubrics || []);
+    if(!variants.length) throw new Error("LLM이 채점기준표를 생성하지 못했습니다. 다시 시도해주세요.");
+    state.rubricVariants = variants.map(v=>({ variant_label: v.variant_label || v.label || "안", criteria: v.criteria || [] }));
+
+    showMsg($("rubricGenMsg"), "'노력요함' 서술에 결핍 표현이 남아있는지 점검하고 있습니다…", "info");
+    const fixResult = await fixRubricDeficits(state.rubricVariants);
+    state.rubricVariants = fixResult.variants;
+
+    const groundingSources = state.groundingChunks.slice(0,10).map(c=>({chunk_id:c.chunk_id, title:c.title, doc_type:c.doc_type, page_from:c.page_from, page_to:c.page_to}));
+    if(state.performanceLevels.length) groundingSources.push({source:"performance_levels", standard_code: state.selectedStandard.code});
+    const taskProposalId = task.id || null;
+    const rubricPayloads = state.rubricVariants.map(v => ({ criteria: v.criteria, grounding_sources: groundingSources }));
+    const rows = await pgInsert("rubric_proposals", rubricPayloads.map((p,i)=>({
+      session_id: state.agentSessionId, task_proposal_id: taskProposalId, variant_label: state.rubricVariants[i].variant_label, payload: p
+    })));
+    rows.forEach((r,i)=>{ state.rubricVariants[i].id = r.id; state.rubricVariants[i]._dbPayload = rubricPayloads[i]; });
+
+    state.selectedRubricIdx = -1;
+    $("rubricNextBar").classList.add("hidden");
+    $("rubricGateHint").classList.add("hidden");
+    $("rubricRevisionField").classList.add("hidden");
+    renderRubricCards();
+    const warnText = fixResult.remaining.length
+      ? (" ⚠ '" + [...new Set(fixResult.remaining)].join(", ") + "' 항목의 '노력요함' 서술은 자동 보정에 실패했으니 직접 확인 후 수정해주세요.")
+      : "";
+    showMsg($("rubricGenMsg"), "채점기준표 " + state.rubricVariants.length + "안을 생성했습니다. 검토 후 하나를 선택하세요." + warnText, fixResult.remaining.length ? "info" : "ok");
+  }catch(err){
+    showMsg($("rubricGenMsg"), err.message, "err");
+  }finally{
+    btn.disabled = false;
+  }
+}
+
+function renderRubricCards(){
+  const box = $("rubricCards");
+  box.innerHTML = "";
+  state.rubricVariants.forEach((v,i)=>{
+    const card = el("div",{class:"card" + (i===state.selectedRubricIdx?" selected":"")});
+    card.appendChild(el("h4",{class:"variant-title"},[v.variant_label]));
+    const table = el("table",{class:"rubric"});
+    table.appendChild(el("tr",{},[el("th",{},["채점요소"]),el("th",{},["매우잘함"]),el("th",{},["잘함"]),el("th",{},["보통"]),el("th",{},["노력요함"])]));
+    (v.criteria||[]).forEach(c=>{
+      const lv = c.levels||{};
+      table.appendChild(el("tr",{},[
+        el("td",{},[c.criterion||""]), el("td",{},[lv["매우잘함"]||""]), el("td",{},[lv["잘함"]||""]),
+        el("td",{},[lv["보통"]||""]), el("td",{},[lv["노력요함"]||""])
+      ]));
+    });
+    card.appendChild(table);
+    const btn = el("button", {class: i===state.selectedRubricIdx?"secondary":""}, [i===state.selectedRubricIdx?"선택됨":"이 안 선택"]);
+    btn.onclick = async () => {
+      state.selectedRubricIdx = i;
+      renderRubricCards();
+      $("rubricNextBar").classList.remove("hidden");
+      $("rubricGateHint").classList.remove("hidden");
+      $("rubricRevisionField").classList.remove("hidden");
+      try{
+        await pgPatch("agent_sessions", "id=eq."+state.agentSessionId, { selected_rubric: { variant_label: v.variant_label, criteria: v.criteria }, stage: "finalized" });
+        if(v.id) await pgPatch("rubric_proposals", "id=eq."+v.id, { is_selected: true });
+      }catch(e){}
+    };
+    card.appendChild(el("div",{class:"btnbar"},[btn]));
+    box.appendChild(card);
+  });
+}
+
+async function reviseSelectedRubric(){
+  const instruction = $("rubricRevisionInput").value.trim();
+  if(!instruction){ showMsg($("rubricRevisionMsg"), "수정하고 싶은 내용을 문장으로 적어주세요.", "err"); return; }
+  if(state.selectedRubricIdx < 0){ showMsg($("rubricRevisionMsg"), "먼저 위에서 채점기준표 안을 하나 선택해주세요.", "err"); return; }
+  const v = state.rubricVariants[state.selectedRubricIdx];
+  const task = state.taskVariants[state.selectedTaskIdx];
+  const btn = $("btnReviseRubric"); btn.disabled = true;
+  showMsg($("rubricRevisionMsg"), "AI가 요청하신 내용을 반영해 수정하고 있습니다…", "info");
+  try{
+    const system = "당신은 대한민국 초등학교 교사를 돕는 평가도구 설계 전문가입니다. 이미 작성된 4단계(매우잘함/잘함/보통/노력요함) 분석적 채점기준표 하나를 교사의 수정 요청에 따라 다시 씁니다. 요청과 관련 없는 부분은 원래 취지를 유지하되 자연스럽게 다듬으세요. " +
+      "특히 '노력요함' 단계는 '~하지 못한다', '~이 안 된다', '~이 부족하다'처럼 결핍·실패를 서술하지 마세요. 대신 해당 채점요소와 관련하여 '보통'보다 낮은 수준이지만 학생이 실제로 보일 수 있는 관찰 가능한 행동을 긍정문으로 서술하세요. 매우잘함·잘함·보통 역시 모두 '~할 수 있다' 형태의 관찰 가능한 행동으로 서술하세요. " +
+      "이 채점기준표는 채점요소(criterion) 이름을 포함해 학생과 학부모에게 그대로 전달됩니다. 해당 학년군 초등학생이 이해할 수 있는 쉽고 일상적인 낱말과 표현을 쓰고, '극댓값', '극솟값'처럼 학년 수준을 벗어난 전문 용어는 사용하지 마세요. 반드시 JSON 객체 하나만 출력하세요.";
+    const criteriaText = (v.criteria||[]).map(c=>{
+      const lv = c.levels||{};
+      return "  - " + (c.criterion||"") + " | 매우잘함: " + (lv["매우잘함"]||"") + " | 잘함: " + (lv["잘함"]||"") + " | 보통: " + (lv["보통"]||"") + " | 노력요함: " + (lv["노력요함"]||"");
+    }).join("\n");
+    const prompt = buildStandardBlock() +
+      (task ? ("\n선택된 평가과제: " + task.variant_label) : "") +
+      "\n\n현재 채점기준표 초안(" + v.variant_label + "):\n" + criteriaText +
+      "\n\n교사의 수정 요청: " + instruction +
+      '\n\n위 요청을 반영해 이 채점기준표 전체를 다시 작성하세요. 다음 JSON 스키마의 객체 하나로만 출력하세요:\n' +
+      '{"criteria":[{"criterion":"...","levels":{"매우잘함":"...","잘함":"...","보통":"...","노력요함":"..."}}]}';
+    const result = await callLLM(system, prompt, (attempt, delay, m, flag) => {
+      showMsg($("rubricRevisionMsg"), retryStatusMsg(attempt, delay, m, flag), "info");
+    });
+    const obj = Array.isArray(result) ? result[0] : result;
+    if(obj.criteria && obj.criteria.length){
+      v.criteria = obj.criteria;
+    }
+
+    const fixResult = await fixRubricDeficits([v]);
+    state.rubricVariants[state.selectedRubricIdx] = fixResult.variants[0];
+    const updated = state.rubricVariants[state.selectedRubricIdx];
+
+    renderRubricCards();
+    $("rubricNextBar").classList.remove("hidden");
+    $("rubricGateHint").classList.remove("hidden");
+    $("rubricRevisionField").classList.remove("hidden");
+    $("rubricRevisionInput").value = "";
+    showMsg($("rubricRevisionMsg"), "요청하신 내용을 반영했습니다. 아래에서 다시 확인해주세요." +
+      (fixResult.remaining.length ? " ⚠ '노력요함' 서술에 결핍 표현이 남아있을 수 있으니 직접 확인해주세요." : ""), "ok");
+
+    try{
+      const mergedPayload = Object.assign({}, updated._dbPayload, { criteria: updated.criteria });
+      updated._dbPayload = mergedPayload;
+      await pgPatch("agent_sessions", "id=eq."+state.agentSessionId, { selected_rubric: { variant_label: updated.variant_label, criteria: updated.criteria } });
+      if(updated.id) await pgPatch("rubric_proposals", "id=eq."+updated.id, { payload: mergedPayload });
+    }catch(e){ /* DB 반영 실패해도 화면은 이미 갱신되어 있음 */ }
+  }catch(err){
+    showMsg($("rubricRevisionMsg"), err.message, "err");
+  }finally{
+    btn.disabled = false;
+  }
+}
+
+/* ---------------- STEP 5: 다운로드 ---------------- */
+function buildFinalHtml(){
+  const std = state.selectedStandard;
+  const task = state.taskVariants[state.selectedTaskIdx];
+  const rubric = state.rubricVariants[state.selectedRubricIdx];
+  let h = "";
+  h += '<h1 style="font-size:20px;">평가도구 — ' + esc(std.code) + '</h1>';
+  h += '<p style="color:#555;">' + esc(std.subject) + ' ' + esc(std.grade_band) + ' · ' + esc(std.domain) + '</p>';
+  h += '<p><b>성취기준</b> ' + esc(std.code) + ' ' + esc(std.standard_text) + '</p>';
+  if(task){
+    h += '<h2 style="font-size:16px;margin-top:20px;">평가과제 — ' + esc(task.variant_label) + '</h2>';
+    h += '<p><b>평가요소</b></p><ul>' + (task.evaluation_elements||[]).map(e=>'<li>'+esc(e)+'</li>').join('') + '</ul>';
+    h += '<p><b>평가장면</b></p>' + (task.scenario_lines||[]).map(l=>'<p style="margin:2px 0;">'+esc(l)+'</p>').join('');
+    h += '<p><b>평가문항</b></p>';
+    (task.items||[]).forEach(it=>{
+      // 학생·학부모에게 그대로 전달되는 문서이므로 'cognitive_level'(인지 수준) 같은 교사용 설계 용어는 넣지 않고 순서만 표시한다.
+      h += '<p style="margin:6px 0;">' + (it.stage ? '<b>['+esc(it.stage)+']</b><br>' : '') + esc(it.text) + '</p>';
+    });
+    if(task.needs_image){
+      h += '<div style="background:#f7f5ef;border:1px solid #e2e0da;border-radius:8px;padding:10px 12px;margin-top:8px;">';
+      h += '<p style="margin:0 0 4px;"><b>생성형 AI 이미지 프롬프트</b></p>';
+      h += '<p style="margin:0 0 4px;">국문: ' + esc(task.image_prompt_kr) + '</p>';
+      h += '<p style="margin:0;">EN: ' + esc(task.image_prompt_en) + '</p>';
+      h += '</div>';
+    }
+  }
+  if(rubric){
+    h += '<h2 style="font-size:16px;margin-top:20px;">평가 채점기준표 — ' + esc(rubric.variant_label) + '</h2>';
+    h += '<table border="1" cellspacing="0" cellpadding="6" style="border-collapse:collapse;width:100%;font-size:13px;">';
+    h += '<tr style="background:#eee;"><th>채점요소</th><th>매우잘함</th><th>잘함</th><th>보통</th><th>노력요함</th></tr>';
+    (rubric.criteria||[]).forEach(c=>{
+      const lv = c.levels||{};
+      h += '<tr><td>' + esc(c.criterion) + '</td><td>' + esc(lv["매우잘함"]) + '</td><td>' + esc(lv["잘함"]) + '</td><td>' + esc(lv["보통"]) + '</td><td>' + esc(lv["노력요함"]) + '</td></tr>';
+    });
+    h += '</table>';
+  }
+  h += '<p style="color:#888;font-size:11px;margin-top:24px;">AI 초안이며 경기도교육청·교육부 장학자료를 근거로 생성되었습니다. 반드시 교사가 검토·수정 후 사용하세요. (Ass-AI-Agent)</p>';
+  return h;
+}
+function renderFinalPreview(){
+  $("finalPreview").innerHTML = buildFinalHtml();
+}
+function downloadBlob(filename, mime, content){
+  const blob = new Blob([content], {type: mime});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(()=> URL.revokeObjectURL(a.href), 5000);
+}
+function doPrintPdf(){
+  $("printArea").innerHTML = buildFinalHtml();
+  window.print();
+}
+function doDownloadHtml(){
+  const code = state.selectedStandard.code.replace(/[^\w가-힣]/g,"");
+  const html = '<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>평가도구 ' + esc(state.selectedStandard.code) + '</title></head><body style="font-family:\'Malgun Gothic\',sans-serif;max-width:800px;margin:30px auto;">' + buildFinalHtml() + '</body></html>';
+  downloadBlob("평가도구_" + code + ".html", "text/html;charset=utf-8", html);
+}
+function doDownloadDoc(){
+  const code = state.selectedStandard.code.replace(/[^\w가-힣]/g,"");
+  const header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><title>평가도구</title></head><body style=\"font-family:'맑은 고딕',sans-serif;\">";
+  const footer = "</body></html>";
+  downloadBlob("평가도구_" + code + ".doc", "application/msword", header + buildFinalHtml() + footer);
+}
+
+/* ---------------- WIRE UP ---------------- */
+function wireEvents(){
+  $("btnHome").onclick = () => {
+    if($("appRoot").classList.contains("hidden")) return; // 로그인 전에는 이동할 화면이 없음
+    goToStep(0);
+  };
+  $("btnSendOtp").onclick = async () => {
+    const email = $("loginEmail").value.trim();
+    if(!email){ showMsg($("loginMsg"), "이메일을 입력해주세요.", "err"); return; }
+    showMsg($("loginMsg"), "코드를 보내는 중…", "info");
+    try{
+      await requestOtp(email);
+      $("otpRow").classList.remove("hidden");
+      $("otpBtnBar").classList.remove("hidden");
+      showMsg($("loginMsg"), "이메일로 인증 코드를 보냈습니다. 확인 후 입력해주세요.", "ok");
+    }catch(err){ showMsg($("loginMsg"), err.message, "err"); }
+  };
+  $("btnResendOtp").onclick = () => $("btnSendOtp").onclick();
+  $("btnVerifyOtp").onclick = async () => {
+    const email = $("loginEmail").value.trim();
+    const token = $("loginOtp").value.trim();
+    if(!token){ showMsg($("loginMsg"), "코드를 입력해주세요.", "err"); return; }
+    showMsg($("loginMsg"), "확인 중…", "info");
+    try{
+      await verifyOtp(email, token);
+      await afterLogin();
+    }catch(err){ showMsg($("loginMsg"), err.message, "err"); }
+  };
+
+  $("cfgProvider").onchange = () => {
+    $("cfgModel").value = DEFAULT_MODELS[$("cfgProvider").value];
+    $("cfgKeyLabelText").textContent = {gemini:"Google Gemini API 키", openai:"OpenAI API 키", claude:"Anthropic Claude API 키"}[$("cfgProvider").value];
+  };
+  $("btnSaveCfg").onclick = saveCfg;
+
+  $("f1Subject").onchange = searchStandards;
+  $("f1Search").oninput = () => { clearTimeout(window._sTimer); window._sTimer = setTimeout(searchStandards, 250); };
+
+  $("f2Orientation").onchange = renderOrientationInfo;
+
+  $("btnBackTo1").onclick = () => goToStep(0);
+  $("btnBackTo2").onclick = () => { renderStep2Standard(); renderLevels4UI(); goToStep(1); };
+  $("btnBackTo3").onclick = () => goToStep(2);
+  $("btnBackTo4").onclick = () => goToStep(3);
+
+  $("btnGenLevels4").onclick = generateLevels4;
+  $("btnReviseLevels4").onclick = reviseLevels4;
+  $("f2EvalElements").oninput = () => { state.evalElements = $("f2EvalElements").value; };
+
+  $("btnToStep3").onclick = () => {
+    if(!state.selectedStandard){ alert("먼저 1단계에서 성취기준을 선택해주세요."); goToStep(0); return; }
+    if(!state.levels4Confirmed){ showMsg($("levels4Msg"), "먼저 성취수준(4단계)을 확정해주세요.", "err"); return; }
+    goToStep(2);
+  };
+  $("btnGenTasks").onclick = generateTasks;
+  $("btnReviseTask").onclick = reviseSelectedTask;
+  $("btnToStep4").onclick = () => goToStep(3);
+  $("btnGenRubrics").onclick = generateRubrics;
+  $("btnReviseRubric").onclick = reviseSelectedRubric;
+  $("btnToStep5").onclick = () => { renderFinalPreview(); goToStep(4); };
+
+  $("btnPrintPdf").onclick = doPrintPdf;
+  $("btnDownloadHtml").onclick = doDownloadHtml;
+  $("btnDownloadDoc").onclick = doDownloadDoc;
+}
+
+/* ---------------- BOOT ---------------- */
+async function afterLogin(){
+  $("loginPanel").classList.add("hidden");
+  $("appRoot").classList.remove("hidden");
+  $("authBadge").innerHTML = "";
+  const email = state.session.user && state.session.user.email || "";
+  const logoutBtn = el("button",{class:"ghost"},["로그아웃"]);
+  logoutBtn.onclick = () => { clearSession(); location.reload(); };
+  $("authBadge").appendChild(document.createTextNode(email));
+  $("authBadge").appendChild(logoutBtn);
+  loadCfg();
+  renderStepsNav();
+  goToStep(0);
+  try{
+    await loadStandardsMeta();
+    await searchStandards();
+    await loadMethodsOrientations();
+    await loadDocTypes();
+  }catch(err){
+    showMsg($("taskGenMsg"), err.message, "err");
+  }
+}
+
+async function boot(){
+  $("appVersionTag").textContent = "v" + APP_VERSION + " (" + APP_VERSION_DATE + ")";
+  wireEvents();
+  loadPersistedSession();
+  const sess = await ensureFreshSession();
+  if(sess){ await afterLogin(); }
+  else { $("authBadge").textContent = "로그인이 필요합니다"; }
+}
+boot();
+
+})();
+</script>
+</body>
+</html>
