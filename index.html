@@ -5,6 +5,10 @@
   Ass-AI-Agent — 버전 기록 (Changelog)
   파일을 수정할 때마다 아래에 새 버전 항목을 맨 위에 추가합니다. (버전: APP_VERSION 상수와 함께 갱신)
 
+  v1.2.0 (2026-09-07)
+  - 5단계 다운로드 완료 후 "평가자 인사이트 보고서" 추가 — 평가 전문성(assessment literacy) 이론 틀(Popham 2009; Xu & Brown 2016)을 참고해 이번 제작 과정에서의 강점·성장 지점을 화면에만 보여줌 (서버 미저장, 다운로드 파일에는 미포함)
+  - 각 단계 "AI에서 수정 요청" 반영 횟수와 성취수준 확정 방식(그대로 수용/수정 후 확정)을 내부적으로 추적해 인사이트 보고서에 반영
+
   v1.1.0 (2026-09-07)
   - 필수/선택 입력을 한눈에 구분할 수 있도록 배지 디자인 도입 — 필수(진한 색 채움) / 선택(옅은 테두리) 스타일을 분리
   - 1단계(학년군·교과·검색어·성취기준 목록), 2단계(평가방법·교수지향·평가요소·수업 맥락 메모·AI 수정요청), 설정(API 키)의 라벨에 필수/선택 배지를 일관되게 적용
@@ -348,6 +352,14 @@
         <button id="btnDownloadHtml">HTML로 다운로드</button>
         <button id="btnDownloadDoc">Word(.doc)로 다운로드</button>
       </div>
+
+      <div class="step-gate hidden" id="insightSection">
+        <div class="step-gate-title">평가자 인사이트 보고서</div>
+        <div class="sub">이번 평가도구 제작 과정에서 내리신 선택을 바탕으로, 평가 전문성 관점에서 잘하신 점과 더 살펴보면 좋을 점을 정리해드립니다. 화면에만 표시되며 서버에 저장되지 않고, 이번 한 번의 활동만으로 선생님의 역량을 판단하는 공식 평가가 아니라 스스로 돌아보시는 데 참고할 자료입니다.</div>
+        <div class="btnbar"><button class="secondary" id="btnGenInsight">인사이트 보고서 생성</button></div>
+        <div id="insightMsg"></div>
+        <div id="insightReport"></div>
+      </div>
     </section>
 
   </div>
@@ -388,6 +400,8 @@ const state = {
   selectedTaskIdx: -1,
   rubricVariants: [],
   selectedRubricIdx: -1,
+  revisionCounts: { levels4: 0, task: 0, rubric: 0 },  // 각 단계 "AI에서 수정 요청"을 실제로 반영한 횟수 — 인사이트 보고서 참고용
+  levels4AcceptedAsIs: null,  // 성취수준을 첫 생성 그대로 확정했는지(true) / 수정 요청을 거쳤는지(false)
 };
 
 /* ---------------- UTIL ---------------- */
@@ -725,7 +739,7 @@ function saveCfg(){
 
 /* ---------------- STEP NAV ---------------- */
 const STEP_IDS = ["step1","step2","step3","step4","step5"];
-const APP_VERSION = "1.1.0";
+const APP_VERSION = "1.2.0";
 const APP_VERSION_DATE = "2026-09-07";
 const STEP_LABELS = ["① 성취기준","② 방법·지향","③ 평가과제","④ 채점기준표","⑤ 다운로드"];
 let currentStep = 0;
@@ -922,6 +936,12 @@ async function generateLevels4(){
     return;
   }
   state.evalElements = evalElements;
+  // 새 평가도구 제작 주기의 시작점 — 이전 주기의 인사이트 보고서·수정 횟수 기록을 초기화한다.
+  state.revisionCounts = { levels4: 0, task: 0, rubric: 0 };
+  state.levels4AcceptedAsIs = null;
+  $("insightSection").classList.add("hidden");
+  $("insightReport").innerHTML = "";
+  showMsg($("insightMsg"), "", "");
   const btn = $("btnGenLevels4"); if(btn) btn.disabled = true;
   showMsg($("levels4Msg"), "AI가 평가 요소·평가방법·교수지향을 반영해 성취수준을 재구성하고 있습니다…", "info");
   try{
@@ -1029,6 +1049,7 @@ async function reviseLevels4(){
     if(LEVEL4_KEYS.some(k => state.levels4[k] !== prevLevels[k])) changed.push("성취수준(4단계)");
 
     state.levels4Confirmed = false;
+    state.revisionCounts.levels4++;
     renderLevels4UI();
     $("levels4RevisionInput").value = "";
     const changedText = changed.length ? (" (" + [...new Set(changed)].join(", ") + ")") : "";
@@ -1043,6 +1064,7 @@ async function reviseLevels4(){
 
 async function confirmLevels4(){
   state.levels4Confirmed = true;
+  if(state.levels4AcceptedAsIs === null) state.levels4AcceptedAsIs = (state.revisionCounts.levels4 === 0);
   renderLevels4UI();
   showMsg($("levels4Msg"), "성취수준(4단계)을 확정했습니다. 이제 수업 맥락 메모를 작성할 수 있습니다.", "ok");
   try{
@@ -1414,6 +1436,7 @@ async function reviseSelectedTask(){
     if(obj.image_prompt_kr != null) v.image_prompt_kr = obj.image_prompt_kr;
     if(obj.image_prompt_en != null) v.image_prompt_en = obj.image_prompt_en;
 
+    state.revisionCounts.task++;
     renderTaskCards();
     $("taskNextBar").classList.remove("hidden");
     $("taskGateHint").classList.remove("hidden");
@@ -1602,6 +1625,7 @@ async function reviseSelectedRubric(){
     state.rubricVariants[state.selectedRubricIdx] = fixResult.variants[0];
     const updated = state.rubricVariants[state.selectedRubricIdx];
 
+    state.revisionCounts.rubric++;
     renderRubricCards();
     $("rubricNextBar").classList.remove("hidden");
     $("rubricGateHint").classList.remove("hidden");
@@ -1678,17 +1702,75 @@ function downloadBlob(filename, mime, content){
 function doPrintPdf(){
   $("printArea").innerHTML = buildFinalHtml();
   window.print();
+  markDownloaded();
 }
 function doDownloadHtml(){
   const code = state.selectedStandard.code.replace(/[^\w가-힣]/g,"");
   const html = '<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>평가도구 ' + esc(state.selectedStandard.code) + '</title></head><body style="font-family:\'Malgun Gothic\',sans-serif;max-width:800px;margin:30px auto;">' + buildFinalHtml() + '</body></html>';
   downloadBlob("평가도구_" + code + ".html", "text/html;charset=utf-8", html);
+  markDownloaded();
 }
 function doDownloadDoc(){
   const code = state.selectedStandard.code.replace(/[^\w가-힣]/g,"");
   const header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><title>평가도구</title></head><body style=\"font-family:'맑은 고딕',sans-serif;\">";
   const footer = "</body></html>";
   downloadBlob("평가도구_" + code + ".doc", "application/msword", header + buildFinalHtml() + footer);
+  markDownloaded();
+}
+
+/* ---------------- STEP 5: 평가자 인사이트 보고서 (화면 표시 전용, 서버 미저장) ---------------- */
+// 다운로드/인쇄를 한 번이라도 완료하면 인사이트 보고서 생성 영역을 드러낸다.
+function markDownloaded(){
+  $("insightSection").classList.remove("hidden");
+}
+
+async function generateInsightReport(){
+  const btn = $("btnGenInsight"); btn.disabled = true;
+  showMsg($("insightMsg"), "AI가 이번 제작 과정을 바탕으로 인사이트 보고서를 작성하고 있습니다…", "info");
+  $("insightReport").innerHTML = "";
+  try{
+    const std = state.selectedStandard;
+    const method = state.methods.find(m=>m.slug===$("f2Method").value);
+    const orient = state.orientations.find(o=>o.slug===$("f2Orientation").value);
+    const task = state.taskVariants[state.selectedTaskIdx];
+    const rubric = state.rubricVariants[state.selectedRubricIdx];
+    const rc = state.revisionCounts;
+
+    const system = "당신은 초등 교사의 평가 전문성(assessment literacy) 성장을 돕는 컨설턴트입니다. Popham(2009, \"Assessment Literacy for Teachers: Faddish or Fundamental?\", Theory Into Practice)이 제시한 타당도·신뢰도·채점기준표 설계·형성적 활용 등 평가 전문성의 여러 측면과, Xu & Brown(2016, \"Teacher assessment literacy in practice: A reconceptualization\", Teaching and Teacher Education)이 제안한 '지식·실천·교사 정체성이 상호작용하며 함께 성장한다'는 관점(TALiP)을 참고 틀로 삼아, 교사가 방금 완료한 평가도구 제작 과정을 돌아보는 짧은 리포트를 씁니다. " +
+      "절대 이 한 번의 활동만으로 교사의 전반적인 역량을 단정하지 마세요 — 이번 과제에서 실제로 관찰된 구체적 선택에 근거해서만 이야기하고, 점수를 매기거나 등급을 부여하지 마세요. 결핍이나 부족을 지적하는 어조 대신, 실제로 한 선택을 구체적으로 짚어 인정하고, 성장 지점은 '~을 더 시도해보시면 좋겠습니다'처럼 제안형으로 쓰세요. 수정 요청을 여러 번 한 것과 처음 초안을 신속하게 검토해 수용한 것은 둘 다 각자의 방식으로 유효한 전문성의 표현이니, 어느 쪽도 우열로 판단하지 마세요. " +
+      "형식은 다음과 같습니다 — (1) '잘하신 점' 2~3가지: 각각 이번 세션에서 실제로 한 선택을 근거로 제시, (2) '더 살펴보면 좋을 점' 1~2가지: 역시 구체적 근거와 함께 다음에 시도해볼 실천 제안을 포함, (3) '참고한 관점': 위 두 이론을 한두 문장으로 짧게 소개. 존댓말로, 700자 내외로 작성하세요. 마크다운 헤더(#)나 별표(*) 없이 소제목은 '■' 기호로 표시하고, 문단 사이는 줄바꿈으로 구분하세요.";
+
+    const prompt = "성취기준: " + std.code + " " + std.standard_text + " (" + std.subject + " " + std.grade_band + ")\n" +
+      "선택한 평가방법: " + (method?method.name:"미지정") + " / 교수 지향: " + (orient?orient.name:"미지정") + "\n" +
+      "성취기준 기반 평가 요소: " + ($("f2EvalElements").value.trim() || "미입력") + "\n" +
+      "확정된 성취수준(4단계): " + (state.levels4 ? LEVEL4_KEYS.map(k=>k+": "+state.levels4[k]).join(" / ") : "없음") + "\n" +
+      "성취수준을 첫 생성 그대로 확정했는지: " + (state.levels4AcceptedAsIs ? "예 (수정 요청 없이 그대로 수용)" : "아니요 (직접 수정 요청을 거쳐 확정)") + "\n" +
+      "수업 맥락 메모: " + ($("f2Context").value.trim() || "작성하지 않음") + "\n" +
+      "2단계 AI 수정 요청 반영 횟수: " + rc.levels4 + "회\n" +
+      "선택한 평가과제(" + (task?task.variant_label:"미선택") + "): " + (task ? (task.evaluation_elements||[]).join(", ") : "") + "\n" +
+      "3단계 AI 수정 요청 반영 횟수: " + rc.task + "회\n" +
+      "선택한 채점기준표(" + (rubric?rubric.variant_label:"미선택") + ") 채점요소: " + (rubric ? (rubric.criteria||[]).map(c=>c.criterion).join(", ") : "") + "\n" +
+      "4단계 AI 수정 요청 반영 횟수: " + rc.rubric + "회\n\n" +
+      "위 정보를 바탕으로 평가자 인사이트 보고서를 작성하세요.";
+
+    const result = await callLLM(system, prompt, (attempt, delay, model, switching) => {
+      showMsg($("insightMsg"), switching ? ("모델을 " + model + "로 바꿔 다시 시도합니다…") : ("서버가 혼잡해 " + Math.round(delay/1000) + "초 후 재시도합니다…"), "info");
+    });
+
+    const box = el("div", {class:"orient-info"});
+    result.split(/\n+/).forEach(line=>{
+      const t = line.trim();
+      if(!t) return;
+      box.appendChild(el("p", {style:"margin:0 0 10px;"}, [t]));
+    });
+    $("insightReport").innerHTML = "";
+    $("insightReport").appendChild(box);
+    showMsg($("insightMsg"), "인사이트 보고서를 작성했습니다. (이 보고서는 저장되지 않으며, 화면을 벗어나면 사라집니다)", "ok");
+  }catch(err){
+    showMsg($("insightMsg"), err.message, "err");
+  }finally{
+    btn.disabled = false;
+  }
 }
 
 /* ---------------- WIRE UP ---------------- */
@@ -1755,6 +1837,7 @@ function wireEvents(){
   $("btnPrintPdf").onclick = doPrintPdf;
   $("btnDownloadHtml").onclick = doDownloadHtml;
   $("btnDownloadDoc").onclick = doDownloadDoc;
+  $("btnGenInsight").onclick = generateInsightReport;
 }
 
 /* ---------------- BOOT ---------------- */
