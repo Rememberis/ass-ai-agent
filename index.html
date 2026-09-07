@@ -5,6 +5,11 @@
   Ass-AI-Agent — 버전 기록 (Changelog)
   파일을 수정할 때마다 아래에 새 버전 항목을 맨 위에 추가합니다. (버전: APP_VERSION 상수와 함께 갱신)
 
+  v1.3.4 (2026-09-07)
+  - "평가자 인사이트 보고서" 배색을 옅은 라벤더에서 짙은 인디고-보라 그라데이션 배경 + 흰 글자로 훨씬 뚜렷하게 재조정 (이전 배색이 화면상 차이가 잘 안 느껴진다는 피드백 반영)
+  - 제목(21px→28px), 본문 설명(14.5px→16.5px), 보고서 내용(소제목 18px→21px, 본문 15.5px→17px)의 글자 크기를 전반적으로 확대
+  - 카드 배경이 어두워짐에 따라 "인사이트 보고서 생성" 버튼과 상태 메시지(안내/완료/오류) 색상을 카드 안에서도 잘 보이도록 별도 조정
+
   v1.3.3 (2026-09-07)
   - 2단계 평가방법·교수지향 선택칸과 그 아래 설명 카드 사이 여백을 넓혀(margin-top 8px→18px) 두 영역이 시각적으로 분리되어 보이도록 조정
 
@@ -140,15 +145,22 @@
   .orient-info .orient-desc{font-weight:600;margin-bottom:4px;}
   .orient-info .orient-basis{color:var(--sub);}
   .orient-info .orient-basis b{color:var(--ink);font-weight:600;}
-  /* "평가자 인사이트 보고서" — 나머지 화면의 따뜻한 갈색 톤과 확실히 구분되는 보라 계열 배색 + 더 큰 글자 크기 */
-  .insight-card{background:#f1eefc;border:1.5px solid #c9bdf0;border-radius:14px;
-    padding:20px 22px;margin-top:28px;}
-  .insight-title{font-size:21px;font-weight:800;color:#5b3fa0;margin:0 0 10px;}
-  .insight-card > .sub{color:#6a5a99;font-size:14.5px;}
-  .insight-card .orient-info{background:#e6e0fa;border:1px solid #c9bdf0;
-    margin-top:14px;font-size:15.5px;line-height:1.8;color:#33325f;}
-  .insight-card .orient-info .orient-desc{font-size:18px;font-weight:800;color:#4a3b78;margin-bottom:6px;}
-  .insight-card .orient-info .orient-basis{font-size:15.5px;line-height:1.8;color:#3d3465;}
+  /* "평가자 인사이트 보고서" — 나머지 화면의 따뜻한 갈색 톤과 확실히 구분되는 짙은 인디고·보라 배경 + 흰 글자, 큰 글자 크기 */
+  .insight-card{background:linear-gradient(135deg,#2e1a5e,#4a2f8f);border:none;border-radius:16px;
+    padding:26px 28px 28px;margin-top:32px;box-shadow:0 10px 28px rgba(46,26,94,.28);color:#f3eeff;}
+  .insight-title{font-size:28px;font-weight:800;color:#ffffff;margin:0 0 14px;letter-spacing:.01em;}
+  .insight-card > .sub{color:#ded2ff;font-size:16.5px;line-height:1.75;}
+  .insight-card .btnbar{margin-top:18px;}
+  .insight-card button.secondary{background:#ffffff;color:#4a2f8f;border-color:#ffffff;font-weight:700;}
+  .insight-card button.secondary:hover{background:#efe9ff;}
+  .insight-card .msg{background:rgba(255,255,255,.14);color:#ffffff;}
+  .insight-card .msg.err{background:rgba(255,120,110,.2);color:#ffe1de;}
+  .insight-card .msg.ok{background:rgba(120,255,170,.18);color:#d9ffe6;}
+  .insight-card .msg.info{background:rgba(255,255,255,.14);color:#ede6ff;}
+  .insight-card .orient-info{background:rgba(255,255,255,.11);border:1px solid rgba(255,255,255,.28);
+    border-radius:12px;padding:16px 18px;margin-top:18px;font-size:17px;line-height:1.85;color:#f3eeff;}
+  .insight-card .orient-info .orient-desc{font-size:21px;font-weight:800;color:#ffffff;margin-bottom:8px;}
+  .insight-card .orient-info .orient-basis{font-size:17px;line-height:1.85;color:#e6ddfb;}
   textarea.edit-cell{background:var(--field-bg);border-color:var(--field-border);}
   textarea.edit-cell:disabled{background:#f7f5f0;border-color:var(--border);color:var(--ink);opacity:1;}
   /* 접혀 있을 때는 글자 한 줄 높이만큼만 차지하도록 타이트하게, 펼치면 원래 여백으로 */
@@ -767,7 +779,7 @@ function saveCfg(){
 
 /* ---------------- STEP NAV ---------------- */
 const STEP_IDS = ["step1","step2","step3","step4","step5"];
-const APP_VERSION = "1.3.3";
+const APP_VERSION = "1.3.4";
 const APP_VERSION_DATE = "2026-09-07";
 const STEP_LABELS = ["① 성취기준","② 방법·지향","③ 평가과제","④ 채점기준표","⑤ 다운로드"];
 let currentStep = 0;
