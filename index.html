@@ -5,6 +5,12 @@
   Ass-AI-Agent — 버전 기록 (Changelog)
   파일을 수정할 때마다 아래에 새 버전 항목을 맨 위에 추가합니다. (버전: APP_VERSION 상수와 함께 갱신)
 
+  v1.3.0 (2026-09-07)
+  - "평가방법·교수지향" 선택 영역을 강조 카드(teacher-field)로 감싸 눈에 띄게 하고, 그동안 교수지향에만 있던 설명 카드를 평가방법에도 추가(설명·예시 장면·채점 시 참고할 점) — 선택지 이름만 보고 고르지 않도록 개선
+
+  v1.2.1 (2026-09-07)
+  - 버그 수정: "평가자 인사이트 보고서" 생성 시 "result.split is not a function" 오류 — callLLM이 항상 JSON 객체를 반환하는 구조인데 자유 서술형 텍스트로 잘못 처리하던 부분을, 강점/보완점/참고관점을 담은 JSON 스키마로 요청·렌더링하도록 수정
+
   v1.2.0 (2026-09-07)
   - 5단계 다운로드 완료 후 "평가자 인사이트 보고서" 추가 — 평가 전문성(assessment literacy) 이론 틀(Popham 2009; Xu & Brown 2016)을 참고해 이번 제작 과정에서의 강점·성장 지점을 화면에만 보여줌 (서버 미저장, 다운로드 파일에는 미포함)
   - 각 단계 "AI에서 수정 요청" 반영 횟수와 성취수준 확정 방식(그대로 수용/수정 후 확정)을 내부적으로 추적해 인사이트 보고서에 반영
@@ -107,7 +113,7 @@
   .teacher-field label{display:flex;align-items:center;gap:8px;flex-wrap:wrap;
     font-size:14px;font-weight:600;color:var(--ink);margin:0 0 6px;}
   .teacher-field .sub{margin:0 0 9px;}
-  .teacher-field textarea,.teacher-field input[type=text]{border-color:var(--field-border);}
+  .teacher-field textarea,.teacher-field input[type=text],.teacher-field select{border-color:var(--field-border);}
   .teacher-field:has(textarea:disabled),.teacher-field:has(input:disabled){
     opacity:.65;background:#f7f5f0;border-color:var(--border);}
   .req-badge{font-size:10.5px;font-weight:700;color:#fff;background:var(--accent);
@@ -236,17 +242,20 @@
     <!-- STEP 2 -->
     <section class="panel hidden" id="step2">
       <h2>2단계 · 평가방법 · 교수지향 선택</h2>
-      <div class="row">
-        <div>
-          <label>평가방법 <span class="req-badge">필수</span></label>
-          <select id="f2Method"></select>
+      <div class="teacher-field">
+        <div class="row">
+          <div>
+            <label>평가방법 <span class="req-badge">필수</span></label>
+            <select id="f2Method"></select>
+          </div>
+          <div>
+            <label>교수 지향 <span class="req-badge">필수</span></label>
+            <select id="f2Orientation"></select>
+          </div>
         </div>
-        <div>
-          <label>교수 지향 <span class="req-badge">필수</span></label>
-          <select id="f2Orientation"></select>
-        </div>
+        <div id="f2MethodInfo" class="orient-info"></div>
+        <div id="f2OrientationInfo" class="orient-info"></div>
       </div>
-      <div id="f2OrientationInfo" class="orient-info"></div>
       <div id="f2StandardReminder"></div>
 
       <div class="teacher-field">
@@ -739,7 +748,7 @@ function saveCfg(){
 
 /* ---------------- STEP NAV ---------------- */
 const STEP_IDS = ["step1","step2","step3","step4","step5"];
-const APP_VERSION = "1.2.0";
+const APP_VERSION = "1.3.0";
 const APP_VERSION_DATE = "2026-09-07";
 const STEP_LABELS = ["① 성취기준","② 방법·지향","③ 평가과제","④ 채점기준표","⑤ 다운로드"];
 let currentStep = 0;
@@ -839,7 +848,20 @@ async function loadMethodsOrientations(){
   state.methods.forEach(m => mSel.appendChild(el("option",{value:m.slug},["[" + m.category + "] " + m.name])));
   const oSel = $("f2Orientation"); oSel.innerHTML = "";
   state.orientations.forEach(o => oSel.appendChild(el("option",{value:o.slug},[o.name])));
+  renderMethodInfo();
   renderOrientationInfo();
+}
+
+// 선택한 "평가방법"의 특징(설명·채점 시 참고할 점·예시 장면)을 안내 카드로 보여준다 — 교사가 방법을 이해하고 고를 수 있도록.
+function renderMethodInfo(){
+  const box = $("f2MethodInfo");
+  if(!box) return;
+  const method = state.methods.find(m=>m.slug===$("f2Method").value);
+  box.innerHTML = "";
+  if(!method){ return; }
+  if(method.description) box.appendChild(el("div",{class:"orient-desc"},[method.description]));
+  if(method.scene_examples) box.appendChild(el("div",{class:"orient-basis"},["예시 장면: " + method.scene_examples]));
+  if(method.rubric_hint) box.appendChild(el("div",{class:"orient-basis"},["채점 시 참고: " + method.rubric_hint]));
 }
 
 // 선택한 "교수 지향"의 특징(간단 설명)과 이론적 근거·출처를 안내 카드로 보여준다 — 교사가 지향을 이해하고 고를 수 있도록.
@@ -1020,6 +1042,7 @@ async function reviseLevels4(){
     const changed = [];
     if(obj.method_slug && state.methods.some(m=>m.slug===obj.method_slug) && obj.method_slug !== $("f2Method").value){
       $("f2Method").value = obj.method_slug;
+      renderMethodInfo();
       changed.push("평가방법");
     }
     if(obj.orientation_slug && state.orientations.some(o=>o.slug===obj.orientation_slug) && obj.orientation_slug !== $("f2Orientation").value){
@@ -1737,8 +1760,7 @@ async function generateInsightReport(){
     const rc = state.revisionCounts;
 
     const system = "당신은 초등 교사의 평가 전문성(assessment literacy) 성장을 돕는 컨설턴트입니다. Popham(2009, \"Assessment Literacy for Teachers: Faddish or Fundamental?\", Theory Into Practice)이 제시한 타당도·신뢰도·채점기준표 설계·형성적 활용 등 평가 전문성의 여러 측면과, Xu & Brown(2016, \"Teacher assessment literacy in practice: A reconceptualization\", Teaching and Teacher Education)이 제안한 '지식·실천·교사 정체성이 상호작용하며 함께 성장한다'는 관점(TALiP)을 참고 틀로 삼아, 교사가 방금 완료한 평가도구 제작 과정을 돌아보는 짧은 리포트를 씁니다. " +
-      "절대 이 한 번의 활동만으로 교사의 전반적인 역량을 단정하지 마세요 — 이번 과제에서 실제로 관찰된 구체적 선택에 근거해서만 이야기하고, 점수를 매기거나 등급을 부여하지 마세요. 결핍이나 부족을 지적하는 어조 대신, 실제로 한 선택을 구체적으로 짚어 인정하고, 성장 지점은 '~을 더 시도해보시면 좋겠습니다'처럼 제안형으로 쓰세요. 수정 요청을 여러 번 한 것과 처음 초안을 신속하게 검토해 수용한 것은 둘 다 각자의 방식으로 유효한 전문성의 표현이니, 어느 쪽도 우열로 판단하지 마세요. " +
-      "형식은 다음과 같습니다 — (1) '잘하신 점' 2~3가지: 각각 이번 세션에서 실제로 한 선택을 근거로 제시, (2) '더 살펴보면 좋을 점' 1~2가지: 역시 구체적 근거와 함께 다음에 시도해볼 실천 제안을 포함, (3) '참고한 관점': 위 두 이론을 한두 문장으로 짧게 소개. 존댓말로, 700자 내외로 작성하세요. 마크다운 헤더(#)나 별표(*) 없이 소제목은 '■' 기호로 표시하고, 문단 사이는 줄바꿈으로 구분하세요.";
+      "절대 이 한 번의 활동만으로 교사의 전반적인 역량을 단정하지 마세요 — 이번 과제에서 실제로 관찰된 구체적 선택에 근거해서만 이야기하고, 점수를 매기거나 등급을 부여하지 마세요. 결핍이나 부족을 지적하는 어조 대신, 실제로 한 선택을 구체적으로 짚어 인정하고, 성장 지점은 '~을 더 시도해보시면 좋겠습니다'처럼 제안형으로 쓰세요. 수정 요청을 여러 번 한 것과 처음 초안을 신속하게 검토해 수용한 것은 둘 다 각자의 방식으로 유효한 전문성의 표현이니, 어느 쪽도 우열로 판단하지 마세요. 각 항목은 반드시 이번 세션에서 실제로 한 선택을 구체적 근거로 제시하세요. 존댓말을 쓰세요. 결과는 JSON 객체 하나만 출력하세요.";
 
     const prompt = "성취기준: " + std.code + " " + std.standard_text + " (" + std.subject + " " + std.grade_band + ")\n" +
       "선택한 평가방법: " + (method?method.name:"미지정") + " / 교수 지향: " + (orient?orient.name:"미지정") + "\n" +
@@ -1751,18 +1773,24 @@ async function generateInsightReport(){
       "3단계 AI 수정 요청 반영 횟수: " + rc.task + "회\n" +
       "선택한 채점기준표(" + (rubric?rubric.variant_label:"미선택") + ") 채점요소: " + (rubric ? (rubric.criteria||[]).map(c=>c.criterion).join(", ") : "") + "\n" +
       "4단계 AI 수정 요청 반영 횟수: " + rc.rubric + "회\n\n" +
-      "위 정보를 바탕으로 평가자 인사이트 보고서를 작성하세요.";
+      "위 정보를 바탕으로 평가자 인사이트 보고서를 작성하세요. 다음 JSON 스키마의 객체 하나로만 출력하세요:\n" +
+      '{"strengths":["이번 세션에서 실제로 한 선택을 근거로 든 잘하신 점 문장", "..."],' +
+      '"growth_points":["구체적 근거와 다음에 시도해볼 제안을 담은 문장", "..."],' +
+      '"framework_note":"참고한 두 이론적 관점을 한두 문장으로 소개"}';
 
     const result = await callLLM(system, prompt, (attempt, delay, model, switching) => {
       showMsg($("insightMsg"), switching ? ("모델을 " + model + "로 바꿔 다시 시도합니다…") : ("서버가 혼잡해 " + Math.round(delay/1000) + "초 후 재시도합니다…"), "info");
     });
 
     const box = el("div", {class:"orient-info"});
-    result.split(/\n+/).forEach(line=>{
-      const t = line.trim();
-      if(!t) return;
-      box.appendChild(el("p", {style:"margin:0 0 10px;"}, [t]));
-    });
+    box.appendChild(el("div", {class:"orient-desc"}, ["■ 잘하신 점"]));
+    (result.strengths||[]).forEach(t => box.appendChild(el("p", {style:"margin:0 0 8px;"}, ["· " + t])));
+    box.appendChild(el("div", {class:"orient-desc", style:"margin-top:12px;"}, ["■ 더 살펴보면 좋을 점"]));
+    (result.growth_points||[]).forEach(t => box.appendChild(el("p", {style:"margin:0 0 8px;"}, ["· " + t])));
+    if(result.framework_note){
+      box.appendChild(el("div", {class:"orient-desc", style:"margin-top:12px;"}, ["■ 참고한 관점"]));
+      box.appendChild(el("div", {class:"orient-basis"}, [result.framework_note]));
+    }
     $("insightReport").innerHTML = "";
     $("insightReport").appendChild(box);
     showMsg($("insightMsg"), "인사이트 보고서를 작성했습니다. (이 보고서는 저장되지 않으며, 화면을 벗어나면 사라집니다)", "ok");
@@ -1811,6 +1839,7 @@ function wireEvents(){
   $("f1Subject").onchange = searchStandards;
   $("f1Search").oninput = () => { clearTimeout(window._sTimer); window._sTimer = setTimeout(searchStandards, 250); };
 
+  $("f2Method").onchange = renderMethodInfo;
   $("f2Orientation").onchange = renderOrientationInfo;
 
   $("btnBackTo1").onclick = () => goToStep(0);
