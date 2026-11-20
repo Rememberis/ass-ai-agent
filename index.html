@@ -5,6 +5,11 @@
   Ass-AI-Agent — 버전 기록 (Changelog)
   파일을 수정할 때마다 아래에 새 버전 항목을 맨 위에 추가합니다. (버전: APP_VERSION 상수와 함께 갱신)
 
+  v1.4.2 (2026-11-21)
+  - 로그인 유지 강화: 한 번 로그인하면 같은 브라우저에서 다시 인증코드를 거의 입력하지 않도록 세션 자동 갱신을 견고하게 개선
+  - 동시 요청이 토큰을 동시에 갱신해 '이미 사용된 토큰'으로 로그아웃되던 문제(single-flight 갱신으로 해결) 및 네트워크 일시 오류 시 세션을 지우지 않고 재시도하도록 수정
+  - 일시적 오류로 자동 로그인이 안 되면 "새로고침하면 다시 접속" 안내 표시 (리프레시 토큰이 실제 만료된 경우에만 재로그인 요구)
+
   v1.4.1 (2026-11-21)
   - 본문 하단 버전·날짜 표시를 작업 일정에 맞춰 갱신하고, 누락돼 있던 v1.3.5·v1.4.0 변경 내역을 이 Changelog에 추가
 
@@ -519,21 +524,40 @@ function clearSession(){
   try{ localStorage.removeItem("pda_session"); }catch(e){}
 }
 
+// 리프레시 토큰이 실제로 무효가 된 경우(만료·이미 사용됨·없음)만 재로그인이 필요하다.
+// 네트워크 일시 오류와는 구분해서, 일시 오류 때는 저장된 세션을 지우지 않고 유지한다.
+function isInvalidRefresh(err){
+  const m = ((err && err.message) || "").toLowerCase();
+  return /invalid refresh token|refresh_token_not_found|refresh token not found|already used|invalid_grant|token.*expired|expired.*token/.test(m);
+}
+// 여러 요청이 동시에 토큰 갱신을 시도하면, 두 번째 요청이 '이미 사용된' 리프레시 토큰을 보내 로그아웃되는
+// Supabase 특유의 문제가 있다. 진행 중인 갱신이 있으면 그 결과를 함께 기다리도록 한 번에 하나만 실행한다.
+let _refreshInFlight = null;
+async function doRefreshSession(){
+  let lastErr;
+  for(let attempt=0; attempt<3; attempt++){
+    try{
+      const data = await authRequest("/token?grant_type=refresh_token", { refresh_token: state.session.refresh_token });
+      const sess = { access_token: data.access_token, refresh_token: data.refresh_token, user: data.user || state.session.user };
+      persistSession(sess);
+      return sess;
+    }catch(e){
+      lastErr = e;
+      if(isInvalidRefresh(e)){ clearSession(); return null; }   // 진짜 재로그인 필요 — 세션 삭제
+      if(attempt < 2) await new Promise(r=>setTimeout(r, 600*(attempt+1))); // 일시 오류 — 잠시 후 재시도
+    }
+  }
+  // 일시 오류로 갱신에 실패 — 저장된 세션은 지우지 않는다(새로고침하면 다시 시도 가능).
+  const err = new Error((lastErr && lastErr.message) || "세션 갱신 실패"); err.transient = true; throw err;
+}
 async function ensureFreshSession(){
   if(!state.session) return null;
   const claims = decodeJwt(state.session.access_token);
   const now = Math.floor(Date.now()/1000);
   if(claims && claims.exp && claims.exp - now > 60) return state.session;
-  // refresh
-  try{
-    const data = await authRequest("/token?grant_type=refresh_token", { refresh_token: state.session.refresh_token });
-    const sess = { access_token: data.access_token, refresh_token: data.refresh_token, user: data.user };
-    persistSession(sess);
-    return sess;
-  }catch(e){
-    clearSession();
-    return null;
-  }
+  if(_refreshInFlight) return _refreshInFlight;   // 동시 갱신 합치기
+  _refreshInFlight = doRefreshSession().finally(()=>{ _refreshInFlight = null; });
+  return _refreshInFlight;
 }
 
 async function requestOtp(email){
@@ -820,7 +844,7 @@ function saveCfg(){
 
 /* ---------------- STEP NAV ---------------- */
 const STEP_IDS = ["step1","step2","step3","step4","step5"];
-const APP_VERSION = "1.4.1";
+const APP_VERSION = "1.4.2";
 const APP_VERSION_DATE = "2026-11-21";
 const STEP_LABELS = ["① 성취기준","② 방법·지향","③ 평가과제","④ 채점기준표","⑤ 다운로드"];
 let currentStep = 0;
@@ -1968,9 +1992,17 @@ async function boot(){
   $("appVersionTag").textContent = "v" + APP_VERSION + " (" + APP_VERSION_DATE + ")";
   wireEvents();
   loadPersistedSession();
-  const sess = await ensureFreshSession();
-  if(sess){ await afterLogin(); }
-  else { $("authBadge").textContent = "로그인이 필요합니다"; }
+  try{
+    const sess = await ensureFreshSession();
+    if(sess){ await afterLogin(); return; }
+    $("authBadge").textContent = "로그인이 필요합니다";   // 세션 없음 또는 재로그인 필요
+  }catch(err){
+    // 저장된 로그인은 남아있지만 일시적 오류로 자동 로그인에 실패 — 세션은 지우지 않았으므로 새로고침하면 재시도된다.
+    $("authBadge").textContent = "로그인이 필요합니다";
+    if(state.session){
+      showMsg($("loginMsg"), "일시적인 네트워크 오류로 자동 로그인에 실패했습니다. 페이지를 새로고침하면 저장된 로그인으로 다시 접속합니다.", "info");
+    }
+  }
 }
 boot();
 
