@@ -5,6 +5,9 @@
   Ass-AI-Agent — 버전 기록 (Changelog)
   파일을 수정할 때마다 아래에 새 버전 항목을 맨 위에 추가합니다. (버전: APP_VERSION 상수와 함께 갱신)
 
+  v1.5.2 (2026-11-22)
+  - 3단계에서 평가과제 안을 선택하면 채점기준표 생성으로 이동하는 버튼이 활성화되도록 수정
+
   v1.5.1 (2026-11-22)
   - 3단계 구성안 전체를 코멘트로 다시 생성하는 옵션 추가
   - 재생성 실패 시 기존 안 유지, 성공 시 이전 선택 및 채점기준 초기화
@@ -864,7 +867,7 @@ function saveCfg(){
 
 /* ---------------- STEP NAV ---------------- */
 const STEP_IDS = ["step1","step2","step3","step4","step5"];
-const APP_VERSION = "1.5.1";
+const APP_VERSION = "1.5.2";
 const APP_VERSION_DATE = "2026-11-22";
 const STEP_LABELS = ["① 성취기준","② 방법·지향","③ 평가과제","④ 채점기준표","⑤ 다운로드"];
 let currentStep = 0;
@@ -1576,6 +1579,7 @@ function renderTaskCards(){
     btn.onclick = async () => {
       if(state.taskGenerationBusy) return;
       state.selectedTaskIdx = i;
+      $("btnToStep4").disabled = false;
       renderTaskCards();
       $("taskNextBar").classList.remove("hidden");
       $("taskGateHint").classList.remove("hidden");

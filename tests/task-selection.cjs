@@ -1,0 +1,26 @@
+const fs = require('node:fs');
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+const html = fs.readFileSync(require('node:path').join(__dirname, '../index.html'), 'utf8');
+const source = html.slice(html.indexOf('function renderTaskCards(){'), html.indexOf('// 3단계 "다음 단계로 넘어가기 전"'));
+const nodes = new Map();
+const makeNode = tag => ({tag, children:[], disabled:false, classList:{add(){},remove(){}}, appendChild(child){this.children.push(child);}});
+const $ = id => { if(!nodes.has(id))nodes.set(id,makeNode('div'));return nodes.get(id); };
+let buttons=[];
+const state={taskVariants:[{variant_label:'A안'}],selectedTaskIdx:-1,taskGenerationBusy:false};
+const context={state,$,el:(tag)=>{const node=makeNode(tag);if(tag==='button')buttons.push(node);return node;},pgPatch:async()=>{}};
+vm.createContext(context);vm.runInContext(source,context);
+(async()=>{
+  $('btnToStep4').disabled=true;
+  context.renderTaskCards();
+  await buttons[0].onclick();
+  assert.equal(state.selectedTaskIdx,0);
+  assert.equal($('btnToStep4').disabled,false,'Selecting a task must enable the next-step button');
+  state.taskGenerationBusy=true; state.selectedTaskIdx=-1; $('btnToStep4').disabled=true;
+  buttons=[];context.renderTaskCards();
+  assert.equal(buttons[0].disabled,true);
+  await buttons[0].onclick();
+  assert.equal(state.selectedTaskIdx,-1);
+  assert.equal($('btnToStep4').disabled,true,'Generation must prevent premature selection');
+  console.log('PASS: task selection enables rubric navigation; generation keeps selection blocked');
+})().catch(error=>{console.error(error);process.exitCode=1;});
