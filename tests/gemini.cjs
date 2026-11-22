@@ -1,0 +1,22 @@
+const fs = require('node:fs');
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+const {stripTypeScriptTypes} = require('node:module');
+const root = require('node:path').join(__dirname, '../');
+const html = fs.readFileSync(root+'index.html','utf8');
+new vm.Script(html.match(/<script>([\s\S]*?)<\/script>/)[1]);
+const source = stripTypeScriptTypes(fs.readFileSync(root+'supabase/functions/embed-search-gemini/index.ts','utf8'));
+let handler, requests=[], mockStatus=200, malformed=false, member=true;
+const context={Request,Response,AbortSignal,Number,Error,Deno:{env:{get:n=>({SUPABASE_URL:'https://test.supabase.co',SUPABASE_ANON_KEY:'anon',GEMINI_API_KEY:'test-key'})[n]},serve:fn=>handler=fn},fetch:async(url,options)=>{requests.push({url,options}); if(url.endsWith('/auth/v1/user')) return Response.json({id:'user'}); if(url.endsWith('/rpc/is_member')) return Response.json(member);return Response.json({embedding:{values:Array(malformed?4:768).fill(0.1)}},{status:mockStatus});}};
+vm.runInNewContext(source,context);
+(async()=>{
+assert.equal((await handler(new Request('https://test',{method:'OPTIONS'}))).status,204);
+assert.equal((await handler(new Request('https://test',{method:'POST'}))).status,401);
+const request=text=>new Request('https://test',{method:'POST',headers:{Authorization:'Bearer test','Content-Type':'application/json'},body:JSON.stringify({text})});
+assert.equal((await handler(request(''))).status,400); member=false; assert.equal((await handler(request('test'))).status,403); member=true;
+let res=await handler(request('평가 기준')); assert.equal(res.status,200);assert.equal((await res.json()).embedding.length,768);
+const call=requests.at(-1);assert.equal(call.options.headers['x-goog-api-key'],'test-key');assert.ok(!call.url.includes('test-key'));const body=JSON.parse(call.options.body);assert.equal(body.taskType,'RETRIEVAL_QUERY');assert.equal(body.outputDimensionality,768);
+malformed=true;assert.equal((await handler(request('test'))).status,502);malformed=false;mockStatus=429;assert.equal((await handler(request('test'))).status,429);
+assert.ok(html.includes('rpc("search_knowledge_gemini"'));assert.ok(!/upstage/i.test(html));
+console.log('PASS: page syntax, CORS preflight, authentication, input validation, Gemini request, vector validation, rate-limit handling, isolated search RPC.');
+})().catch(e=>{console.error(e);process.exitCode=1;});
