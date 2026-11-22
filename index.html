@@ -5,6 +5,10 @@
   Ass-AI-Agent — 버전 기록 (Changelog)
   파일을 수정할 때마다 아래에 새 버전 항목을 맨 위에 추가합니다. (버전: APP_VERSION 상수와 함께 갱신)
 
+  v1.5.1 (2026-11-22)
+  - 3단계 구성안 전체를 코멘트로 다시 생성하는 옵션 추가
+  - 재생성 실패 시 기존 안 유지, 성공 시 이전 선택 및 채점기준 초기화
+
   v1.5.0 (2026-11-22)
   - 근거자료 검색을 Gemini 임베딩 전용 함수와 검색 인덱스로 전환
   - 임베딩 모델·차원을 검증하고 Gemini 키를 HTTP 헤더로 전송
@@ -364,6 +368,13 @@
       <div id="taskDraftBox"></div>
       <div id="groundingBox"></div>
       <div id="taskCards"></div>
+      <div class="teacher-field hidden" id="taskRegenerateField">
+        <label for="taskRegenerateInput">평가과제 구성안 다시 생성하기</label>
+        <div class="sub">구성안에서 바꾸거나 보완할 점을 적어주세요. 특정 안을 선택하지 않아도 코멘트와 현재 구성안을 참고해 근거자료를 다시 검색하고 새로운 2~3안을 만듭니다.</div>
+        <textarea id="taskRegenerateInput" maxlength="3000" placeholder="예: A안의 생활 속 상황은 유지하고, 모둠 활동 대신 개인 활동으로 바꿔주세요. 문항은 20분 안에 해결할 수 있게 구성해주세요."></textarea>
+        <div class="btnbar"><button class="secondary" id="btnRegenerateTasks">코멘트 반영하여 다시 생성</button></div>
+        <div id="taskRegenerateMsg" role="status" aria-live="polite"></div>
+      </div>
 
       <div class="step-gate">
         <div class="step-gate-title">다음 단계로 넘어가기 전</div>
@@ -462,6 +473,7 @@ const state = {
   contextNote: "",
   agentSessionId: null,
   docTypes: [],             // knowledge_documents의 doc_type 전체 목록 (근거자료 다양성 확보용)
+  taskGenerationBusy: false,
   taskDrafts: [],           // 근거자료 검색 전 LLM 자체 구상 초안 — [{variant_label, evaluation_elements[], scenario_summary, item_approach, key_search_terms[]}]
   groundingChunks: [],
   taskVariants: [],         // [{id?, variant_label, evaluation_elements[], scenario_lines[], items:[{stage,cognitive_level,text}], needs_image, image_prompt_kr, image_prompt_en, grounding_sources[]}]
@@ -852,7 +864,7 @@ function saveCfg(){
 
 /* ---------------- STEP NAV ---------------- */
 const STEP_IDS = ["step1","step2","step3","step4","step5"];
-const APP_VERSION = "1.5.0";
+const APP_VERSION = "1.5.1";
 const APP_VERSION_DATE = "2026-11-22";
 const STEP_LABELS = ["① 성취기준","② 방법·지향","③ 평가과제","④ 채점기준표","⑤ 다운로드"];
 let currentStep = 0;
@@ -1350,7 +1362,35 @@ function renderGrounding(){
   box.appendChild(list);
 }
 
-async function generateTasks(){
+async function regenerateTasks(){
+  const instruction = $("taskRegenerateInput").value.trim();
+  if(!instruction){ showMsg($("taskRegenerateMsg"), "다시 생성할 때 반영할 코멘트를 입력해주세요.", "err"); return; }
+  await generateTasks(instruction);
+}
+
+async function generateTasks(instruction){
+  if(state.taskGenerationBusy || $("btnReviseTask").disabled) return;
+  instruction = typeof instruction === "string" ? instruction.trim() : "";
+  const previous = {
+    taskDrafts: state.taskDrafts, groundingChunks: state.groundingChunks,
+    taskVariants: state.taskVariants, selectedTaskIdx: state.selectedTaskIdx
+  };
+  const feedbackBlock = instruction ? "\n\n[현재 평가과제 구성안]\n" +
+    JSON.stringify(previous.taskVariants.length ? previous.taskVariants.map(v=>({
+      variant_label:v.variant_label, evaluation_elements:v.evaluation_elements,
+      scenario_lines:v.scenario_lines, items:v.items, needs_image:v.needs_image,
+      image_prompt_kr:v.image_prompt_kr, image_prompt_en:v.image_prompt_en
+    })) : previous.taskDrafts) +
+    "\n\n[교사의 재생성 코멘트]\n" + instruction +
+    "\n위 코멘트를 반영해 구성안 전체를 새로 작성하세요. 성취기준과 확정한 성취수준은 유지하고, 근거자료와 학년 수준에 맞게 서로 다른 2~3안을 제안하세요." : "";
+  state.taskGenerationBusy = true;
+  $("btnRegenerateTasks").disabled = true;
+  $("taskRegenerateInput").disabled = true;
+  $("btnReviseTask").disabled = true;
+  $("btnToStep4").disabled = true;
+  $("btnBackTo2").disabled = true;
+  renderTaskCards();
+  showMsg($("taskRegenerateMsg"), instruction ? "코멘트를 반영하여 구성안을 다시 생성하고 있습니다…" : "", "info");
   const method = state.methods.find(m=>m.slug===$("f2Method").value);
   const orient = state.orientations.find(o=>o.slug===$("f2Orientation").value);
   const btn = $("btnGenTasks"); btn.disabled = true;
@@ -1366,7 +1406,7 @@ async function generateTasks(){
     const draftPrompt = buildStandardBlock() +
       "\n평가방법: " + (method?method.name+" - "+method.description:"미지정") +
       "\n교수 지향: " + (orient?orient.name+" - "+orient.short_desc:"미지정") +
-      "\n수업 맥락: " + (state.contextNote || "(없음)") +
+      "\n수업 맥락: " + (state.contextNote || "(없음)") + feedbackBlock +
       "\n\n위 정보를 바탕으로 서로 다른 접근의 평가과제 초안 개념 2~3개를 구상하세요. 각 초안은 다음 JSON 스키마를 따르는 객체입니다(다른 설명 문장 금지):\n" +
       '[{"variant_label":"A안 (짧은 특징)","evaluation_elements":["...","..."],"scenario_summary":"평가 장면에 대한 1~2문장 요약","item_approach":"처음(낮은 인지 수준)/중간/마지막(종합적 인지 수준) 흐름을 어떻게 구성할지에 대한 짧은 구상","key_search_terms":["이 초안을 근거자료로 확인할 때 검색해 볼 핵심어","..."]}]';
     const draftResult = await callLLM(draftSystem, draftPrompt, (attempt, delay, m, flag) => {
@@ -1380,7 +1420,7 @@ async function generateTasks(){
     /* 2단계: 구상한 초안을 반영해 Supabase 근거자료(다양한 장학자료)를 검색 */
     showMsg($("taskGenMsg"), "구상한 초안을 바탕으로 근거자료를 검색하고 있습니다…", "info");
     const draftTermsText = draftVariants.map(v => (v.evaluation_elements||[]).join(" ") + " " + (v.key_search_terms||[]).join(" ")).join(" ");
-    const searchQuery = [std.code, std.standard_text, method?method.name:"", orient?orient.name:"", state.contextNote, draftTermsText].filter(Boolean).join(" / ");
+    const searchQuery = [std.code, std.standard_text, method?method.name:"", orient?orient.name:"", state.contextNote, draftTermsText, instruction].filter(Boolean).join(" / ");
     state.groundingChunks = await gatherDiverseGrounding(searchQuery);
     renderGrounding();
 
@@ -1400,7 +1440,7 @@ async function generateTasks(){
     const prompt = buildStandardBlock() +
       "\n평가방법: " + (method?method.name+" - "+method.description:"미지정") +
       "\n교수 지향: " + (orient?orient.name+" - "+orient.short_desc:"미지정") +
-      "\n수업 맥락: " + (state.contextNote || "(없음)") +
+      "\n수업 맥락: " + (state.contextNote || "(없음)") + feedbackBlock +
       "\n\n[근거자료 검색 전 1차 초안 — AI 자체 구상]\n" + draftSummaryText +
       "\n\n다음은 이 초안을 확인하기 위해 검색된 실제 장학자료 근거입니다:\n" + groundingText +
       "\n\n위 근거자료로 1차 초안을 확인하고, 근거와 어긋나거나 부족한 부분은 수정·보완하여 서로 다른 접근의 평가과제 최종 2~3안을 작성하세요. 각 안은 다음을 지켜 작성하세요:\n" +
@@ -1443,16 +1483,40 @@ async function generateTasks(){
     })));
     rows.forEach((r,i)=>{ state.taskVariants[i].id = r.id; state.taskVariants[i]._dbPayload = taskPayloads[i]; });
 
+    await pgPatch("agent_sessions", "id=eq."+state.agentSessionId, { selected_task: null, selected_rubric: null, stage: "draft" });
     state.selectedTaskIdx = -1;
+    state.rubricVariants = [];
+    state.selectedRubricIdx = -1;
+    $("rubricCards").innerHTML = "";
+    ["rubricNextBar", "rubricGateHint", "rubricRevisionField"].forEach(id=>$(id).classList.add("hidden"));
+    $("finalPreview").innerHTML = "";
+    $("insightReport").innerHTML = "";
+    $("taskRevisionInput").value = "";
+    if(instruction){
+      state.revisionCounts.task++;
+      showMsg($("taskRegenerateMsg"), "코멘트를 반영해 새 구성안을 만들었습니다. 검토 후 사용할 안을 다시 선택해주세요.", "ok");
+    }
+    $("taskRegenerateField").classList.remove("hidden");
     $("taskNextBar").classList.add("hidden");
     $("taskGateHint").classList.add("hidden");
     $("taskRevisionField").classList.add("hidden");
     renderTaskCards();
     showMsg($("taskGenMsg"), "AI가 구상한 초안을 실제 근거자료로 확인·보완하여 평가과제 " + state.taskVariants.length + "안을 생성했습니다. 검토 후 하나를 선택하세요.", "ok");
   }catch(err){
+    Object.assign(state, previous);
+    renderTaskDrafts();
+    renderGrounding();
     showMsg($("taskGenMsg"), err.message, "err");
+    if(instruction) showMsg($("taskRegenerateMsg"), "재생성하지 못했습니다. 기존 구성안과 코멘트는 유지됩니다. " + err.message, "err");
   }finally{
+    state.taskGenerationBusy = false;
     btn.disabled = false;
+    $("btnRegenerateTasks").disabled = false;
+    $("taskRegenerateInput").disabled = false;
+    $("btnReviseTask").disabled = false;
+    $("btnToStep4").disabled = state.selectedTaskIdx < 0;
+    $("btnBackTo2").disabled = false;
+    renderTaskCards();
   }
 }
 
@@ -1508,7 +1572,9 @@ function renderTaskCards(){
     }
 
     const btn = el("button", {class: i===state.selectedTaskIdx?"secondary":""}, [i===state.selectedTaskIdx?"선택됨":"이 안 선택"]);
+    btn.disabled = state.taskGenerationBusy;
     btn.onclick = async () => {
+      if(state.taskGenerationBusy) return;
       state.selectedTaskIdx = i;
       renderTaskCards();
       $("taskNextBar").classList.remove("hidden");
@@ -1530,6 +1596,7 @@ function renderTaskCards(){
 
 // 3단계 "다음 단계로 넘어가기 전" 서술형 부분 수정 요청 — 선택된 평가과제 하나를 교사의 문장 지시에 따라 다시 쓴다.
 async function reviseSelectedTask(){
+  if(state.taskGenerationBusy) return;
   const instruction = $("taskRevisionInput").value.trim();
   if(!instruction){ showMsg($("taskRevisionMsg"), "수정하고 싶은 내용을 문장으로 적어주세요.", "err"); return; }
   if(state.selectedTaskIdx < 0){ showMsg($("taskRevisionMsg"), "먼저 위에서 평가과제 안을 하나 선택해주세요.", "err"); return; }
@@ -1960,7 +2027,8 @@ function wireEvents(){
     if(!state.levels4Confirmed){ showMsg($("levels4Msg"), "먼저 성취수준(4단계)을 확정해주세요.", "err"); return; }
     goToStep(2);
   };
-  $("btnGenTasks").onclick = generateTasks;
+  $("btnGenTasks").onclick = () => generateTasks();
+  $("btnRegenerateTasks").onclick = regenerateTasks;
   $("btnReviseTask").onclick = reviseSelectedTask;
   $("btnToStep4").onclick = () => goToStep(3);
   $("btnGenRubrics").onclick = generateRubrics;
